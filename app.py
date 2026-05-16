@@ -484,6 +484,45 @@ def test_ticker(ticker):
     }), 200
 
 
+
+@app.route("/schwab/debug", methods=["GET", "POST"])
+def schwab_debug():
+    """Debug endpoint — logs all request params."""
+    params = dict(request.args)
+    headers = dict(request.headers)
+    print(f"[DEBUG] Args: {params}")
+    print(f"[DEBUG] Headers: {headers}")
+    code = params.get("code", "")
+    if code:
+        # Try token exchange right here
+        try:
+            resp = requests.post(
+                "https://api.schwabapi.com/v1/oauth/token",
+                data={"grant_type": "authorization_code", "code": code,
+                      "redirect_uri": BASE_URL + "/schwab/debug"},
+                auth=(SCHWAB_CLIENT_ID, SCHWAB_CLIENT_SECRET),
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                token_data = resp.json()
+                now = datetime.now(timezone.utc).timestamp()
+                token_data["expires_at"] = now + token_data.get("expires_in", 1800)
+                _token_cache.clear()
+                _token_cache.update(token_data)
+                save_token_to_env(token_data)
+                encoded = encode_token(token_data)
+                return f"""<html><body style="font-family:monospace;padding:40px;background:#0a0a0a;color:#00ff88;">
+                <h2>✅ Token captured via debug!</h2>
+                <p>Add this to Railway → Variables → SCHWAB_TOKEN:</p>
+                <textarea rows="4" style="width:100%;background:#111;color:#0f0;border:1px solid #0f0;padding:10px;font-size:11px;">{encoded}</textarea>
+                <p><a href="/schwab/status" style="color:#0f0;">Check status →</a></p>
+                </body></html>"""
+            else:
+                return f"<h2>Exchange failed: {resp.status_code}</h2><pre>{resp.text}</pre>", 500
+        except Exception as e:
+            return f"<h2>Error: {e}</h2>", 500
+    return jsonify({"params": params, "message": "No code received"}), 200
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
