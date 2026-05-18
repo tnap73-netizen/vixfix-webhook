@@ -177,7 +177,6 @@ def schwab_auth():
         "response_type": "code",
         "client_id":     SCHWAB_CLIENT_ID,
         "redirect_uri":  SCHWAB_REDIRECT_URI,
-        "scope":         "readonly",
         "state":         state,
     }
     auth_url = "https://api.schwabapi.com/v1/oauth/authorize?" + urlencode(params)
