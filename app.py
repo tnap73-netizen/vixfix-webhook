@@ -39,7 +39,7 @@ RAILWAY_PROJECT_ID   = os.environ.get("RAILWAY_PROJECT_ID", "")  # Railway proje
 
 # Base URL for Schwab OAuth callback — must match Schwab developer portal exactly
 BASE_URL = "https://web-production-76c25d.up.railway.app"
-SCHWAB_REDIRECT_URI = f"{BASE_URL}/schwab/callback"
+SCHWAB_REDIRECT_URI = f"{BASE_URL}/schwab/debug"  # Registered in Schwab Developer Portal
 
 EMA_LABELS = {
     "50":  "GOOD — 50 EMA",
