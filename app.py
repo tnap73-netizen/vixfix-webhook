@@ -416,14 +416,19 @@ def webhook():
 
     # Twilio SMS
     try:
-        subprocess.run([
-            "curl", "-s", "-X", "POST",
-            "https://api.twilio.com/2010-04-01/Accounts/os.environ.get("TWILIO_ACCOUNT_SID", "")/Messages.json",
-            "--user", "os.environ.get("TWILIO_ACCOUNT_SID", ""):os.environ.get("TWILIO_AUTH_TOKEN", "")",
-            "--data-urlencode", f"To=os.environ.get("TWILIO_TO", "+17187047511")",
-            "--data-urlencode", f"From=os.environ.get("TWILIO_FROM", "+18442027763")",
-            "--data-urlencode", f"Body={title}\n{body}",
-        ], timeout=10)
+        twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+        twilio_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+        twilio_from = os.environ.get("TWILIO_FROM", "")
+        twilio_to = os.environ.get("TWILIO_TO", "")
+        if twilio_sid and twilio_token:
+            subprocess.run([
+                "curl", "-s", "-X", "POST",
+                f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json",
+                "--user", f"{twilio_sid}:{twilio_token}",
+                "--data-urlencode", f"To={twilio_to}",
+                "--data-urlencode", f"From={twilio_from}",
+                "--data-urlencode", f"Body={title}\n{body}",
+            ], timeout=10)
     except Exception:
         pass
 
