@@ -15,12 +15,6 @@ Endpoints:
   GET  /schwab/accounts    — account balances (net liq, buying power, P/L)
   GET  /privacy             — BMCMS LLC Privacy Policy (public, for Twilio A2P)
   GET  /terms               — BMCMS LLC Terms of Service (public, for Twilio A2P)
-
-Railway environment variables required:
-  FINVIZ_AUTH        — Finviz Elite auth token
-  SCHWAB_CLIENT_ID   — Schwab app key
-  SCHWAB_CLIENT_SECRET — Schwab app secret
-  SCHWAB_CALLBACK_URL  — must match Schwab developer portal exactly
 """
 
 import os
@@ -45,9 +39,7 @@ SCHWAB_TOKEN_URL   = "https://api.schwabapi.com/v1/oauth/token"
 SCHWAB_MARKET_URL  = "https://api.schwabapi.com/marketdata/v1"
 SCHWAB_TRADER_URL  = "https://api.schwabapi.com/trader/v1"
 
-# Token stored in memory (Railway persists env vars; token refreshed in-process)
 _token_store = {}
-
 TOKEN_FILE = "/tmp/schwab_token.json"
 
 EMA_LABELS = {
@@ -77,7 +69,6 @@ def _load_token() -> dict:
 
 
 def _refresh_access_token(token_data: dict) -> dict:
-    """Exchange refresh token for new access token."""
     refresh_token = token_data.get("refresh_token")
     if not refresh_token:
         raise RuntimeError("No refresh token available")
@@ -101,7 +92,6 @@ def _refresh_access_token(token_data: dict) -> dict:
     resp.raise_for_status()
     new_token = resp.json()
     new_token["obtained_at"] = time.time()
-    # Preserve refresh token if not returned
     if "refresh_token" not in new_token:
         new_token["refresh_token"] = refresh_token
     _save_token(new_token)
@@ -109,17 +99,13 @@ def _refresh_access_token(token_data: dict) -> dict:
 
 
 def get_valid_token() -> str:
-    """Returns a valid access token, refreshing if needed."""
     token = _load_token()
     if not token:
         raise RuntimeError("No token available — re-authorize at /schwab/auth")
-
     obtained_at = token.get("obtained_at", 0)
-    expires_in  = token.get("expires_in", 1800)  # default 30 min
-    # Refresh if within 5 minutes of expiry
+    expires_in  = token.get("expires_in", 1800)
     if time.time() > obtained_at + expires_in - 300:
         token = _refresh_access_token(token)
-
     return token["access_token"]
 
 
@@ -127,7 +113,6 @@ def get_valid_token() -> str:
 
 @app.route("/schwab/auth")
 def schwab_auth():
-    """Redirect to Schwab OAuth login."""
     auth_url = (
         f"{SCHWAB_AUTH_URL}"
         f"?response_type=code"
@@ -139,7 +124,6 @@ def schwab_auth():
 
 @app.route("/schwab/debug")
 def schwab_debug():
-    """OAuth callback — exchanges code for token."""
     code = request.args.get("code")
     if not code:
         return jsonify({"message": "No code received", "params": dict(request.args)}), 400
@@ -169,7 +153,6 @@ def schwab_debug():
     token_data["obtained_at"] = time.time()
     _save_token(token_data)
 
-    # Mask token for display
     masked = token_data.get("access_token", "")[:40] + "..."
     return f"""
     <html><body style="font-family:monospace;padding:40px;background:#0a0a0a;color:#00ff88;">
@@ -185,7 +168,6 @@ def schwab_debug():
 
 @app.route("/schwab/status")
 def schwab_status():
-    """Token status check."""
     token = _load_token()
     if not token:
         return """
@@ -215,14 +197,19 @@ def schwab_status():
     """
 
 
-# ── SCHWAB MARKET DATA ROUTES ──────────────────────────────────────────────────
+@app.route("/schwab/keepalive")
+def schwab_keepalive():
+    try:
+        get_valid_token()
+        return jsonify({"status": "ok", "message": "Token refreshed"}), 200
+    except RuntimeError as e:
+        return jsonify({"status": "error", "message": str(e)}), 401
+
+
+# ── SCHWAB MARKET DATA ─────────────────────────────────────────────────────────
 
 @app.route("/schwab/quotes")
 def schwab_quotes():
-    """
-    Live quotes for one or more symbols.
-    Usage: /schwab/quotes?symbols=HTZ,FOXA,WMT,GME
-    """
     symbols = request.args.get("symbols", "")
     if not symbols:
         return jsonify({"error": "symbols param required"}), 400
@@ -243,7 +230,6 @@ def schwab_quotes():
         return jsonify({"error": f"Schwab API {resp.status_code}", "detail": resp.text}), resp.status_code
 
     data = resp.json()
-    # Simplify output to key fields
     result = {}
     for sym, info in data.items():
         q = info.get("quote", {})
@@ -263,18 +249,41 @@ def schwab_quotes():
     return jsonify(result), 200
 
 
-@app.route("/schwab/positions")
-def schwab_positions():
-    """
-    All open positions across all accounts.
-    Returns simplified position data: symbol, qty, avg price, current value, P/L open, P/L day.
-    """
+@app.route("/schwab/level2")
+def schwab_level2():
+    symbol = request.args.get("symbol", "")
+    if not symbol:
+        return jsonify({"error": "symbol param required"}), 400
+
     try:
         access_token = get_valid_token()
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 401
 
-    # First get account numbers
+    resp = requests.get(
+        f"{SCHWAB_MARKET_URL}/quotes",
+        headers={"Authorization": f"Bearer {access_token}"},
+        params={"symbols": symbol, "fields": "quote,reference"},
+        timeout=10,
+    )
+
+    if resp.status_code != 200:
+        return jsonify({"error": f"Schwab API {resp.status_code}", "detail": resp.text}), resp.status_code
+
+    return jsonify(resp.json()), 200
+
+
+# ── SCHWAB TRADER (POSITIONS + ACCOUNTS) ──────────────────────────────────────
+
+@app.route("/schwab/positions")
+def schwab_positions():
+    """All open positions across all accounts."""
+    try:
+        access_token = get_valid_token()
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 401
+
+    # Get account hash values
     resp = requests.get(
         f"{SCHWAB_TRADER_URL}/accounts/accountNumbers",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -283,7 +292,7 @@ def schwab_positions():
     if resp.status_code != 200:
         return jsonify({"error": f"accountNumbers {resp.status_code}", "detail": resp.text}), resp.status_code
 
-    account_numbers = resp.json()  # [{"accountNumber": "...", "hashValue": "..."}]
+    account_numbers = resp.json()
 
     all_positions = []
     for acct in account_numbers:
@@ -295,4 +304,183 @@ def schwab_positions():
         r = requests.get(
             f"{SCHWAB_TRADER_URL}/accounts/{hash_val}",
             headers={"Authorization": f"Bearer {access_token}"},
-            params={"fie
+            params={"fields": "positions"},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            continue
+
+        acct_data = r.json()
+        positions = acct_data.get("securitiesAccount", {}).get("positions", [])
+
+        for pos in positions:
+            instrument = pos.get("instrument", {})
+            symbol = instrument.get("symbol", "")
+            asset_type = instrument.get("assetType", "")
+            desc = instrument.get("description", "")
+
+            long_qty  = pos.get("longQuantity", 0)
+            short_qty = pos.get("shortQuantity", 0)
+            qty = long_qty if long_qty else -short_qty
+
+            avg_price     = pos.get("averagePrice", 0)
+            market_value  = pos.get("marketValue", 0)
+            current_price = pos.get("currentDayProfitLossPercentage", None)
+
+            pl_open = pos.get("longOpenProfitLoss", 0) or pos.get("shortOpenProfitLoss", 0)
+            pl_day  = pos.get("currentDayProfitLoss", 0)
+
+            all_positions.append({
+                "account":      acct_num[-4:] if acct_num else "????",
+                "symbol":       symbol,
+                "description":  desc,
+                "asset_type":   asset_type,
+                "qty":          qty,
+                "avg_price":    round(avg_price, 4),
+                "market_value": round(market_value, 2),
+                "pl_open":      round(pl_open, 2),
+                "pl_day":       round(pl_day, 2),
+            })
+
+    return jsonify({"positions": all_positions, "count": len(all_positions)}), 200
+
+
+@app.route("/schwab/accounts")
+def schwab_accounts():
+    """Account balances: net liq, buying power, P/L day."""
+    try:
+        access_token = get_valid_token()
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 401
+
+    resp = requests.get(
+        f"{SCHWAB_TRADER_URL}/accounts/accountNumbers",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        return jsonify({"error": f"accountNumbers {resp.status_code}", "detail": resp.text}), resp.status_code
+
+    account_numbers = resp.json()
+    results = []
+
+    for acct in account_numbers:
+        hash_val = acct.get("hashValue")
+        acct_num = acct.get("accountNumber")
+        if not hash_val:
+            continue
+
+        r = requests.get(
+            f"{SCHWAB_TRADER_URL}/accounts/{hash_val}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            continue
+
+        acct_data = r.json().get("securitiesAccount", {})
+        balances  = acct_data.get("currentBalances", {})
+
+        results.append({
+            "account":          acct_num[-4:] if acct_num else "????",
+            "type":             acct_data.get("type", ""),
+            "net_liquidation":  round(balances.get("liquidationValue", 0), 2),
+            "buying_power":     round(balances.get("buyingPower", 0) or balances.get("availableFunds", 0), 2),
+            "cash_balance":     round(balances.get("cashBalance", 0), 2),
+            "day_pl":           round(balances.get("dayTradingEquityCall", 0), 2),
+            "equity":           round(balances.get("equity", 0), 2),
+        })
+
+    return jsonify({"accounts": results}), 200
+
+
+# ── WEBHOOK ────────────────────────────────────────────────────────────────────
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.get_json(silent=True) or {}
+    ticker  = data.get("ticker", "UNKNOWN")
+    price   = data.get("price", "?")
+    ema     = str(data.get("ema", "50"))
+    vixfix  = data.get("vixfix", "?")
+    pct     = data.get("pct", "?")
+    volume  = data.get("volume", "?")
+
+    label = EMA_LABELS.get(ema, f"{ema} EMA")
+    title = f"EMA SIGNAL — {ticker} | {label}"
+    body  = (
+        f"Price ${price} | {label} touch | "
+        f"VixFix {vixfix} ({pct}th pct) | Vol {volume}x avg\n"
+        f"Jan 2027 calls, 10 contracts, limit mid or below"
+    )
+
+    # Twilio SMS
+    try:
+        subprocess.run([
+            "curl", "-s", "-X", "POST",
+            "https://api.twilio.com/2010-04-01/Accounts/os.environ.get("TWILIO_ACCOUNT_SID", "")/Messages.json",
+            "--user", "os.environ.get("TWILIO_ACCOUNT_SID", ""):os.environ.get("TWILIO_AUTH_TOKEN", "")",
+            "--data-urlencode", f"To=os.environ.get("TWILIO_TO", "+17187047511")",
+            "--data-urlencode", f"From=os.environ.get("TWILIO_FROM", "+18442027763")",
+            "--data-urlencode", f"Body={title}\n{body}",
+        ], timeout=10)
+    except Exception:
+        pass
+
+    return jsonify({"status": "ok", "ticker": ticker}), 200
+
+
+# ── HEALTH CHECK ───────────────────────────────────────────────────────────────
+
+@app.route("/health")
+def health():
+    token = _load_token()
+    schwab_auth = bool(token)
+    if schwab_auth:
+        obtained_at = token.get("obtained_at", 0)
+        expires_in  = token.get("expires_in", 1800)
+        schwab_auth = time.time() < obtained_at + expires_in
+
+    return jsonify({
+        "status":      "ok",
+        "schwab_auth": schwab_auth,
+        "timestamp":   datetime.utcnow().isoformat(),
+    }), 200
+
+
+# ── TEST ───────────────────────────────────────────────────────────────────────
+
+@app.route("/test/<ticker>")
+def test_alert(ticker):
+    title = f"TEST — {ticker} | EMA Signal"
+    body  = f"This is a test alert for {ticker}. System operational."
+    return jsonify({"status": "ok", "title": title, "body": body}), 200
+
+
+# ── LEGAL ──────────────────────────────────────────────────────────────────────
+
+@app.route("/privacy")
+def privacy():
+    return """<html><body style="font-family:Arial;padding:40px;max-width:800px;">
+    <h1>Privacy Policy — BMCMS LLC</h1>
+    <p>Last updated: June 2, 2026</p>
+    <p>BMCMS LLC ("we", "us") operates trading alert and notification services. We collect only the phone numbers necessary to deliver SMS alerts to authorized users. We do not sell or share personal information with third parties. SMS messages are sent solely for trading signal notifications requested by the account holder. To opt out, reply STOP to any message.</p>
+    <p>Contact: connect@aemgworldwide.com</p>
+    </body></html>"""
+
+
+@app.route("/terms")
+def terms():
+    return """<html><body style="font-family:Arial;padding:40px;max-width:800px;">
+    <h1>Terms of Service — BMCMS LLC</h1>
+    <p>Last updated: June 2, 2026</p>
+    <p>By using BMCMS LLC notification services, you agree that: (1) SMS alerts are for informational purposes only and do not constitute financial advice; (2) trading involves risk and past signals do not guarantee future results; (3) you are solely responsible for all trading decisions; (4) service availability is not guaranteed. BMCMS LLC is not liable for any trading losses.</p>
+    <p>Contact: connect@aemgworldwide.com</p>
+    </body></html>"""
+
+
+# ── ENTRY POINT ────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
