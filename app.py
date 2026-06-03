@@ -576,6 +576,14 @@ def terms():
 
 
 
+@app.route('/get/bbg')
+def serve_bbg_basket():
+    from flask import Response, send_file
+    import os
+    path = os.path.join(os.path.dirname(__file__), 'bbg_basket.py')
+    return send_file(path, mimetype='text/plain', as_attachment=False)
+
+
 @app.route('/get/tn')
 def serve_tn_client():
     from flask import Response
