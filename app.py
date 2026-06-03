@@ -484,6 +484,16 @@ def terms():
     </body></html>"""
 
 
+
+
+@app.route('/get/tn')
+def serve_tn_client():
+    """Serve the latest tn_client.py for easy download on TN."""
+    client_code = """ + repr(new_client) + """
+    from flask import Response
+    return Response(client_code, mimetype='text/plain',
+        headers={'Content-Disposition': 'attachment; filename=tn_client.py'})
+
 # ── ENTRY POINT ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
