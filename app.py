@@ -505,7 +505,7 @@ def tn_poll():
 
 @app.route('/tn/cmd', methods=['POST'])
 def tn_cmd():
-    """Agent sends a command. Waits up to 60s for result."""
+    """Agent sends a command. Returns cmd_id immediately — agent polls /tn/get/<cmd_id> for result."""
     if not _check_secret(request):
         return jsonify({'error': 'unauthorized'}), 403
     data = request.get_json(silent=True) or {}
@@ -514,20 +514,24 @@ def tn_cmd():
         return jsonify({'error': 'cmd required'}), 400
 
     cmd_id = str(uuid.uuid4())
-    event  = threading.Event()
     with _tn_lock:
-        _tn_events[cmd_id]  = event
         _tn_cmd_queue.append({'id': cmd_id, 'cmd': cmd})
 
-    got_result = event.wait(timeout=60)
+    return jsonify({'cmd_id': cmd_id, 'status': 'queued'}), 200
+
+
+@app.route('/tn/get/<cmd_id>')
+def tn_get(cmd_id):
+    """Agent polls here for result. Returns result when ready, or pending."""
+    if not _check_secret(request):
+        return jsonify({'error': 'unauthorized'}), 403
     with _tn_lock:
-        result = _tn_results.pop(cmd_id, None)
-        _tn_events.pop(cmd_id, None)
-
-    if not got_result or result is None:
-        return jsonify({'error': 'timeout — TN did not respond within 60s', 'cmd_id': cmd_id}), 504
-
-    return jsonify({'cmd_id': cmd_id, 'result': result}), 200
+        result = _tn_results.get(cmd_id)
+    if result is None:
+        return jsonify({'status': 'pending'}), 202
+    with _tn_lock:
+        _tn_results.pop(cmd_id, None)
+    return jsonify({'status': 'done', 'result': result}), 200
 
 
 @app.route('/tn/result', methods=['POST'])
