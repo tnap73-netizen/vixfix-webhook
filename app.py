@@ -517,16 +517,14 @@ def tn_poll():
         return jsonify({'error': 'unauthorized'}), 403
     
     _last_poll[0] = _time.time()
-    deadline = _time.time() + 25  # long-poll timeout
     
-    while _time.time() < deadline:
-        with _queue_lock:
-            if _cmd_queue:
-                item = _cmd_queue.pop(0)
-                return jsonify({'cmd': item})
-        _time.sleep(0.3)
+    # Return immediately — TN polls in a fast loop
+    with _queue_lock:
+        if _cmd_queue:
+            item = _cmd_queue.pop(0)
+            return jsonify({'cmd': item})
     
-    return jsonify({'cmd': None})  # nothing in time — TN should poll again
+    return jsonify({'cmd': None})
 
 @app.route('/tn/result', methods=['POST'])
 def tn_result():
