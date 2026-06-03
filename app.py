@@ -584,6 +584,14 @@ def serve_bbg_basket():
     return send_file(path, mimetype='text/plain', as_attachment=False)
 
 
+
+@app.route('/get/wmt_ma')
+def serve_wmt_ma():
+    from flask import send_file
+    import os
+    path = os.path.join(os.path.dirname(__file__), 'wmt_ma.py')
+    return send_file(path, mimetype='text/plain', as_attachment=False)
+
 @app.route('/get/data')
 def serve_data_script():
     from flask import send_file
