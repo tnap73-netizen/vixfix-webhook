@@ -23,10 +23,24 @@ import time
 import base64
 import subprocess
 import requests
+import threading
+import uuid
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, redirect
 
 app = Flask(__name__)
+
+# ── TN BRIDGE STATE ────────────────────────────────────────────────────────────
+_tn_lock        = threading.Lock()
+_tn_cmd_queue   = []          # pending commands for TN
+_tn_results     = {}          # cmd_id -> result
+_tn_events      = {}          # cmd_id -> threading.Event
+_tn_last_poll   = 0.0         # epoch of last TN poll
+BRIDGE_SECRET   = os.environ.get('BRIDGE_SECRET', 'BGSM2024')
+
+def _check_secret(req):
+    s = req.headers.get('X-Secret') or req.args.get('secret') or ''
+    return s == BRIDGE_SECRET
 
 # ── CREDENTIALS ────────────────────────────────────────────────────────────────
 FINVIZ_AUTH           = os.environ.get("FINVIZ_AUTH", "bd60c09b-06cb-42ab-9ef7-5b9d7259aedd")
@@ -462,7 +476,79 @@ def test_alert(ticker):
     return jsonify({"status": "ok", "title": title, "body": body}), 200
 
 
-# ── LEGAL ──────────────────────────────────────────────────────────────────────
+# ── TN BRIDGE ENDPOINTS ───────────────────────────────────────────────────────────
+
+@app.route('/tn/status')
+def tn_status():
+    global _tn_last_poll
+    connected = (time.time() - _tn_last_poll) < 15
+    return jsonify({
+        'tn_connected': connected,
+        'last_poll_ago': round(time.time() - _tn_last_poll, 1),
+        'pending_cmds': len(_tn_cmd_queue),
+    }), 200
+
+
+@app.route('/tn/poll')
+def tn_poll():
+    """TN client polls here. Returns next command or empty immediately."""
+    global _tn_last_poll
+    if not _check_secret(request):
+        return jsonify({'error': 'unauthorized'}), 403
+    _tn_last_poll = time.time()
+    with _tn_lock:
+        if _tn_cmd_queue:
+            item = _tn_cmd_queue.pop(0)
+            return jsonify({'cmd': item}), 200
+    return jsonify({'cmd': None}), 200
+
+
+@app.route('/tn/cmd', methods=['POST'])
+def tn_cmd():
+    """Agent sends a command. Waits up to 60s for result."""
+    if not _check_secret(request):
+        return jsonify({'error': 'unauthorized'}), 403
+    data = request.get_json(silent=True) or {}
+    cmd  = data.get('cmd', '')
+    if not cmd:
+        return jsonify({'error': 'cmd required'}), 400
+
+    cmd_id = str(uuid.uuid4())
+    event  = threading.Event()
+    with _tn_lock:
+        _tn_events[cmd_id]  = event
+        _tn_cmd_queue.append({'id': cmd_id, 'cmd': cmd})
+
+    got_result = event.wait(timeout=60)
+    with _tn_lock:
+        result = _tn_results.pop(cmd_id, None)
+        _tn_events.pop(cmd_id, None)
+
+    if not got_result or result is None:
+        return jsonify({'error': 'timeout — TN did not respond within 60s', 'cmd_id': cmd_id}), 504
+
+    return jsonify({'cmd_id': cmd_id, 'result': result}), 200
+
+
+@app.route('/tn/result', methods=['POST'])
+def tn_result():
+    """TN client posts execution result back here."""
+    if not _check_secret(request):
+        return jsonify({'error': 'unauthorized'}), 403
+    data   = request.get_json(silent=True) or {}
+    cmd_id = data.get('id')
+    result = data.get('result')
+    if not cmd_id:
+        return jsonify({'error': 'id required'}), 400
+    with _tn_lock:
+        _tn_results[cmd_id] = result
+        ev = _tn_events.get(cmd_id)
+    if ev:
+        ev.set()
+    return jsonify({'status': 'ok'}), 200
+
+
+# ── LEGAL ────────────────────────────────────────────────────────────────────────
 
 @app.route("/privacy")
 def privacy():
