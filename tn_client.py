@@ -12,7 +12,7 @@ RELAY   = os.environ.get('RELAY_URL', 'https://web-production-76c25d.up.railway.
 SECRET  = os.environ.get('BRIDGE_SECRET', 'BGSM2024')
 HEADERS = {'X-Secret': SECRET}
 
-def execute(cmd, timeout=30):
+def execute(cmd, timeout=300):  # 300s default — Bloomberg data pulls can take 2-3 min
     try:
         proc = subprocess.Popen(
             cmd, shell=True,
@@ -61,11 +61,12 @@ def main():
             if item is None:
                 continue  # nothing pending, poll again immediately
 
-            cmd_id = item.get('id')
-            cmd    = item.get('cmd', '')
-            print(f'  Executing: {cmd}', flush=True)
+            cmd_id  = item.get('id')
+            cmd     = item.get('cmd', '')
+            timeout = int(item.get('timeout', 300))  # per-command timeout override
+            print(f'  Executing (timeout={timeout}s): {cmd}', flush=True)
 
-            result = execute(cmd)
+            result = execute(cmd, timeout=timeout)
             print(f'  rc={result["returncode"]} out={repr(result["stdout"][:60])}', flush=True)
 
             requests.post(
@@ -73,7 +74,7 @@ def main():
                 headers={**HEADERS, 'Content-Type': 'application/json'},
                 params={'secret': SECRET},
                 json={'id': cmd_id, 'result': result},
-                timeout=10
+                timeout=30  # increased from 10s — large Bloomberg JSON responses need more time
             )
             print(f'  Result posted.', flush=True)
 
