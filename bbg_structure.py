@@ -76,9 +76,9 @@ def bdh(fields, start, end, period="DAILY"):
 
 today = datetime.date.today()
 d_end   = today.strftime("%Y%m%d")
-d_start = (today - datetime.timedelta(days=220)).strftime("%Y%m%d")
-w_start = (today - datetime.timedelta(days=220*5)).strftime("%Y%m%d")
-m_start = (today - datetime.timedelta(days=220*20)).strftime("%Y%m%d")
+d_start = (today - datetime.timedelta(days=400)).strftime("%Y%m%d")   # 400 days = ~280 trading days (200 EMA needs 200+)
+w_start = (today - datetime.timedelta(days=365*8)).strftime("%Y%m%d")  # 8 years weekly = ~416 weekly bars (200w EMA needs 200+)
+m_start = (today - datetime.timedelta(days=365*25)).strftime("%Y%m%d") # 25 years monthly
 
 price_fields = ["PX_LAST", "PX_OPEN", "PX_HIGH", "PX_LOW", "VOLUME"]
 
@@ -108,6 +108,25 @@ def calc_rsi(closes, period=14):
     return round(100 - (100 / (1 + rs)), 2)
 
 def fan_status(e20, e50, e100, e200, price):
+    if None in [e20, e50, e100]:
+        return "INSUFFICIENT DATA"
+    if e200 is None:
+        # Work with available EMAs
+        fan_intact = e20 > e50 > e100
+        if not fan_intact:
+            return "BROKEN (200 EMA unavailable)"
+        if price > e20:
+            return "FAN INTACT (20/50/100) — price above 20 EMA (extended)"
+        elif price > e50:
+            return "FAN INTACT (20/50/100) — price between 20 and 50 EMA"
+        elif price >= e50 * 0.97:
+            return "FAN INTACT (20/50/100) — price at 50 EMA (entry zone)"
+        elif price > e100:
+            return "FAN INTACT (20/50/100) — price between 50 and 100 EMA"
+        elif price >= e100 * 0.97:
+            return "FAN INTACT (20/50/100) — price at 100 EMA (entry zone)"
+        else:
+            return "FAN INTACT (20/50/100) — price below 100 EMA"
     if None in [e20, e50, e100, e200]:
         return "INSUFFICIENT DATA"
     fan_intact = e20 > e50 > e100 > e200
