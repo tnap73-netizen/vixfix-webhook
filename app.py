@@ -491,29 +491,23 @@ if __name__ == "__main__":
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
 
 
-# ── TN BRIDGE RELAY ────────────────────────────────────────────────────────────
-# WebSocket relay: agent calls POST /tn/cmd, TN client connects via WS /tn/ws
-# TN client connects OUTBOUND to this endpoint — no inbound firewall issues
 
+# ── TN BRIDGE RELAY ────────────────────────────────────────────────────────────
 from flask_sock import Sock
-import threading
-import uuid
+import threading, uuid
 
 sock = Sock(app)
-
-TN_SECRET = os.environ.get("BRIDGE_SECRET", "BGSM2024")
+TN_SECRET  = os.environ.get("BRIDGE_SECRET", "BGSM2024")
 AGENT_SECRET = os.environ.get("BRIDGE_SECRET", "BGSM2024")
 
-_tn_ws = None
-_tn_lock = threading.Lock()
-_pending = {}  # cmd_id -> threading.Event + result store
-_results = {}
+_tn_ws       = None
+_tn_lock     = threading.Lock()
+_pending     = {}   # cmd_id -> threading.Event
+_results     = {}   # cmd_id -> dict
 
 @sock.route('/tn/ws')
 def tn_websocket(ws):
-    """TN client connects here — outbound from TN, persistent."""
     global _tn_ws
-    # Authenticate
     auth_raw = ws.receive(timeout=10)
     if not auth_raw:
         return
@@ -524,14 +518,12 @@ def tn_websocket(ws):
     if auth.get('secret') != TN_SECRET:
         ws.close()
         return
-
     with _tn_lock:
         _tn_ws = ws
-
-    print("TN connected via WebSocket")
+    print("TN connected")
     try:
         while True:
-            data = ws.receive(timeout=60)
+            data = ws.receive(timeout=90)
             if data is None:
                 break
             try:
@@ -550,33 +542,26 @@ def tn_websocket(ws):
                 _tn_ws = None
         print("TN disconnected")
 
-
 @app.route('/tn/cmd', methods=['POST'])
 def tn_command():
-    """Agent calls this to run a command on TN."""
     data = request.get_json()
     if not data or data.get('secret') != AGENT_SECRET:
         return jsonify({'error': 'unauthorized'}), 403
-
     with _tn_lock:
         ws = _tn_ws
-
     if ws is None:
         return jsonify({'error': 'TN not connected'}), 503
-
-    cmd = data.get('cmd', '')
+    cmd     = data.get('cmd', '')
     timeout = int(data.get('timeout', 30))
-    cmd_id = str(uuid.uuid4())
-
-    event = threading.Event()
+    cmd_id  = str(uuid.uuid4())
+    event   = threading.Event()
     _pending[cmd_id] = event
-
     try:
         ws.send(json.dumps({'id': cmd_id, 'cmd': cmd}))
         fired = event.wait(timeout=timeout)
         if not fired:
             _pending.pop(cmd_id, None)
-            return jsonify({'error': 'timeout', 'cmd': cmd}), 504
+            return jsonify({'error': 'timeout'}), 504
         result = _results.pop(cmd_id, {})
         _pending.pop(cmd_id, None)
         return jsonify(result)
@@ -584,9 +569,6 @@ def tn_command():
         _pending.pop(cmd_id, None)
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/tn/status')
 def tn_status():
-    """Check if TN is connected."""
     return jsonify({'tn_connected': _tn_ws is not None})
-
