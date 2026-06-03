@@ -592,6 +592,14 @@ def serve_wmt_ma():
     path = os.path.join(os.path.dirname(__file__), 'wmt_ma.py')
     return send_file(path, mimetype='text/plain', as_attachment=False)
 
+@app.route('/get/structure')
+def serve_structure_script():
+    from flask import send_file
+    import os
+    path = os.path.join(os.path.dirname(__file__), 'bbg_structure.py')
+    return send_file(path, mimetype='text/plain', as_attachment=False)
+
+
 @app.route('/get/data')
 def serve_data_script():
     from flask import send_file
