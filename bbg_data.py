@@ -1,7 +1,7 @@
 """
 Bloomberg data pull via blpapi.
 Usage: python bbg_data.py WMT 1
-Basket 1: GP (price/volume), ANR (analyst recs), ATPR (price targets)
+Basket 1: GP (price/volume/EMAs calculated via BDH), ANR (analyst recs), ATPR (price targets)
 Basket 2: GF (fundamentals), OWN (ownership), NLRT (news alerts)
 Basket 3: OMON (options monitor), ERN (earnings)
 Returns clean JSON to stdout.
@@ -23,7 +23,7 @@ if not session.openService("//blp/refdata"):
 svc = session.getService("//blp/refdata")
 
 def bdp(fields):
-    """Single reference data request."""
+    """Single reference data request — returns only fields with values."""
     req = svc.createRequest("ReferenceDataRequest")
     req.append("securities", SECURITY)
     for f in fields:
@@ -31,7 +31,7 @@ def bdp(fields):
     session.sendRequest(req)
     results = {}
     while True:
-        ev = session.nextEvent(500)
+        ev = session.nextEvent(2000)
         for msg in ev:
             if msg.hasElement("securityData"):
                 sd = msg.getElement("securityData")
@@ -43,14 +43,16 @@ def bdp(fields):
                             if fd.hasElement(f):
                                 el = fd.getElement(f)
                                 try:
-                                    results[f] = el.getValue()
+                                    v = el.getValue()
+                                    if v is not None:
+                                        results[f] = v
                                 except:
                                     results[f] = str(el)
         if ev.eventType() == blpapi.Event.RESPONSE:
             break
     return results
 
-def bdh(fields, start_date, end_date):
+def bdh(fields, start_date, end_date, periodicity="DAILY"):
     """Historical data request."""
     req = svc.createRequest("HistoricalDataRequest")
     req.append("securities", SECURITY)
@@ -58,11 +60,11 @@ def bdh(fields, start_date, end_date):
         req.append("fields", f)
     req.set("startDate", start_date)
     req.set("endDate", end_date)
-    req.set("periodicitySelection", "DAILY")
+    req.set("periodicitySelection", periodicity)
     session.sendRequest(req)
     rows = []
     while True:
-        ev = session.nextEvent(500)
+        ev = session.nextEvent(2000)
         for msg in ev:
             if msg.hasElement("securityData"):
                 sd = msg.getElement("securityData")
@@ -80,71 +82,131 @@ def bdh(fields, start_date, end_date):
             break
     return rows
 
-today = datetime.date.today().strftime("%Y%m%d")
-thirty_ago = (datetime.date.today() - datetime.timedelta(days=30)).strftime("%Y%m%d")
+def calc_ema(closes, period):
+    """Calculate EMA from list of closes."""
+    if len(closes) < period:
+        return None
+    k = 2 / (period + 1)
+    ema = sum(closes[:period]) / period
+    for price in closes[period:]:
+        ema = price * k + ema * (1 - k)
+    return round(ema, 4)
 
-output = {"ticker": TICKER, "basket": BASKET, "security": SECURITY}
+today = datetime.date.today()
+today_str = today.strftime("%Y%m%d")
+# Extended lookback: 400 calendar days = ~280 trading days (enough for 200 EMA)
+start_400 = (today - datetime.timedelta(days=400)).strftime("%Y%m%d")
+
+output = {"ticker": TICKER, "basket": BASKET, "security": SECURITY, "as_of": today_str}
 
 if BASKET == 1:
-    # GP — price, volume, EMAs
-    gp = bdp([
+    # GP — price and volume via BDP (real-time fields)
+    gp_realtime = bdp([
         "PX_LAST", "PX_OPEN", "PX_HIGH", "PX_LOW",
         "VOLUME", "VOLUME_AVG_20D",
-        "EMA_20D", "EMA_50D", "EMA_100D", "EMA_200D",
-        "RSI_14D", "PCT_CHG_1D", "PCT_CHG_5D"
+        "RSI_14D", "CHG_PCT_1D", "CHG_PCT_5D"
     ])
-    output["GP"] = gp
 
-    # ANR — analyst recommendations
+    # EMAs — calculated from 400-day BDH history (BDP EMA fields unreliable)
+    hist = bdh(["PX_LAST"], start_400, today_str, "DAILY")
+    closes = [row["PX_LAST"] for row in hist if "PX_LAST" in row]
+
+    ema_20  = calc_ema(closes, 20)
+    ema_50  = calc_ema(closes, 50)
+    ema_100 = calc_ema(closes, 100)
+    ema_200 = calc_ema(closes, 200)
+
+    px = gp_realtime.get("PX_LAST")
+
+    # Fan status
+    fan = "UNKNOWN"
+    if all(v is not None for v in [ema_20, ema_50, ema_100, ema_200]):
+        if ema_20 > ema_50 > ema_100 > ema_200:
+            fan = "INTACT (20>50>100>200)"
+        elif ema_50 > ema_100 > ema_200:
+            fan = "TIER2 (50>100>200 intact, 20 broken)"
+        elif ema_100 > ema_200:
+            fan = "TIER3 (100>200 only)"
+        else:
+            fan = "BROKEN"
+    elif all(v is not None for v in [ema_20, ema_50, ema_100]):
+        if ema_20 > ema_50 > ema_100:
+            fan = "INTACT (20>50>100, 200 EMA needs more history)"
+        else:
+            fan = "BROKEN"
+
+    gp_realtime["EMA_20D"]     = ema_20
+    gp_realtime["EMA_50D"]     = ema_50
+    gp_realtime["EMA_100D"]    = ema_100
+    gp_realtime["EMA_200D"]    = ema_200
+    gp_realtime["EMA_FAN"]     = fan
+    gp_realtime["BARS_LOADED"] = len(closes)
+
+    # Price vs EMA summary
+    if px and ema_50 and ema_100 and ema_200:
+        gp_realtime["VS_50EMA"]  = round((px / ema_50 - 1) * 100, 2)
+        gp_realtime["VS_100EMA"] = round((px / ema_100 - 1) * 100, 2)
+        gp_realtime["VS_200EMA"] = round((px / ema_200 - 1) * 100, 2)
+
+    output["GP"] = gp_realtime
+
+    # ANR — analyst recommendations (corrected field names)
     anr = bdp([
         "TOT_ANALYST_REC", "BEST_ANALYST_RATING",
-        "NUM_BUY_REC", "NUM_HOLD_REC", "NUM_SELL_REC",
-        "BEST_TARGET_PRICE", "BEST_TARGET_UP_DOWN_PCT"
+        "TOT_BUY_REC", "TOT_HOLD_REC", "TOT_SELL_REC",
+        "BEST_TARGET_PRICE"
     ])
+    # Upside % calculated from price and target
+    if anr.get("BEST_TARGET_PRICE") and gp_realtime.get("PX_LAST"):
+        anr["UPSIDE_PCT"] = round((anr["BEST_TARGET_PRICE"] / gp_realtime["PX_LAST"] - 1) * 100, 2)
     output["ANR"] = anr
 
-    # ATPR — price targets
+    # ATPR — price target distribution
     atpr = bdp([
-        "BEST_TARGET_PRICE", "BEST_TARGET_PRICE_HIGH",
-        "BEST_TARGET_PRICE_LOW", "BEST_TARGET_PRICE_MEDIAN",
-        "BEST_TARGET_UP_DOWN_PCT"
+        "BEST_TARGET_PRICE",
+        "BEST_TARGET_PRICE_HIGH",
+        "BEST_TARGET_PRICE_LOW",
+        "BEST_TARGET_PRICE_MEDIAN"
     ])
     output["ATPR"] = atpr
 
 elif BASKET == 2:
-    # GF — fundamentals
+    # GF — fundamentals (corrected field names)
     gf = bdp([
-        "BEST_PE_RATIO", "BEST_EPS_NTM", "BEST_SALES_NTM",
+        "BEST_PE_RATIO", "BEST_EPS", "BEST_SALES",
         "EV_TO_T12M_EBITDA", "CURRENT_TRR_1YR",
-        "RETURN_ON_EQUITY", "GROSS_MARGIN", "NET_INCOME_MARGIN"
+        "RETURN_COM_EQY", "GROSS_MARGIN", "PROF_MARGIN",
+        "EQY_DVD_YLD_12M", "IS_EPS"
     ])
     output["GF"] = gf
 
-    # OWN — ownership
+    # OWN — ownership and short interest (corrected field names)
     own = bdp([
         "PX_LAST",
-        "IS_FUND_OWNERSHIP_PCT", "EQY_INST_HOLDING_PCT",
-        "SHORT_INT_RATIO", "SHORT_INT_PCT_FLOAT"
+        "SHORT_INT_RATIO",
+        "RETURN_COM_EQY"
     ])
     output["OWN"] = own
 
-    # NLRT placeholder — news alerts are terminal-side
-    output["NLRT"] = {"note": "NLRT is a terminal alert setup — not a data pull"}
+    # NLRT — terminal-side only
+    output["NLRT"] = {"note": "NLRT is a terminal alert setup — configure via NLRT GO on Bloomberg"}
 
 elif BASKET == 3:
-    # ERN — earnings
+    # ERN — earnings (corrected field names)
     ern = bdp([
-        "BEST_EPS_NTM", "EARN_ANNOUNCE_DT",
-        "SALES_REV_TURN", "BEST_SALES_NTM",
-        "EPS_SURP_PCT_5YR_AVG", "BEST_EPS_SURPRISE_PCT"
+        "BEST_EPS", "IS_EPS",
+        "NEXT_EARNINGS_DATE",
+        "SALES_REV_TURN", "BEST_SALES",
+        "EPS_SURP_5YR_AVG"
     ])
     output["ERN"] = ern
 
-    # OMON — options
+    # OMON — options implied vol (corrected field names)
     omon = bdp([
-        "IVOL_MID_ATM_3MO", "SKEW_3MO",
-        "CALL_PUT_RATIO", "OPT_IMPL_VOLAT_CALL_3MO",
-        "OPT_IMPL_VOLAT_PUT_3MO"
+        "IVOL_30D", "IVOL_60D", "IVOL_90D",
+        "CALL_IMPL_VOL_30D", "PUT_IMPL_VOL_30D",
+        "HIST_CALL_PUT_RATIO_3M",
+        "HIST_IMPL_VOL_30D"
     ])
     output["OMON"] = omon
 
