@@ -533,13 +533,15 @@ def tn_result():
     if secret != TN_SECRET:
         return jsonify({'error': 'unauthorized'}), 403
     
-    data = request.get_json()
+    data = request.get_json(force=True, silent=True) or {}
+    print(f"TN result raw: {data}", flush=True)
     cmd_id = data.get('id')
     result = data.get('result', {})
     
-    _results[cmd_id] = result
-    if cmd_id in _events:
-        _events[cmd_id].set()
+    if cmd_id:
+        _results[cmd_id] = result
+        if cmd_id in _events:
+            _events[cmd_id].set()
     
     return jsonify({'ok': True})
 
