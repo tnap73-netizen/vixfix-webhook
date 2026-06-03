@@ -492,89 +492,93 @@ if __name__ == "__main__":
 
 
 
-# ── TN BRIDGE RELAY ────────────────────────────────────────────────────────────
-from flask_sock import Sock
-import threading, uuid
 
-sock = Sock(app)
-TN_SECRET  = os.environ.get("BRIDGE_SECRET", "BGSM2024")
+# ── TN BRIDGE RELAY (HTTP Long-Poll) ───────────────────────────────────────────
+# Architecture: TN polls GET /tn/poll for commands, POST results to /tn/result
+# Agent posts command to /tn/cmd, waits for result
+# No WebSocket state issues — pure HTTP, works with any server config
+
+import threading, uuid, time as _time
+
 AGENT_SECRET = os.environ.get("BRIDGE_SECRET", "BGSM2024")
+TN_SECRET    = os.environ.get("BRIDGE_SECRET", "BGSM2024")
 
-_tn_ws       = None
-_tn_lock     = threading.Lock()
-_pending     = {}   # cmd_id -> threading.Event
-_results     = {}   # cmd_id -> dict
+_cmd_queue   = []          # pending commands for TN to pick up
+_results     = {}          # cmd_id -> result dict  
+_events      = {}          # cmd_id -> threading.Event
+_queue_lock  = threading.Lock()
+_last_poll   = [0.0]       # last time TN polled (for connected detection)
 
-@sock.route('/tn/ws')
-def tn_websocket(ws):
-    global _tn_ws
-    auth_raw = ws.receive(timeout=10)
-    if not auth_raw:
-        return
-    try:
-        auth = json.loads(auth_raw)
-    except Exception:
-        return
-    if auth.get('secret') != TN_SECRET:
-        ws.close()
-        return
-    with _tn_lock:
-        _tn_ws = ws
-    print("TN connected")
-    try:
-        while True:
-            data = ws.receive(timeout=90)
-            if data is None:
-                break
-            try:
-                msg = json.loads(data)
-                cmd_id = msg.get('id')
-                if cmd_id and cmd_id in _pending:
-                    _results[cmd_id] = msg.get('result', {})
-                    _pending[cmd_id].set()
-            except Exception as e:
-                print(f"WS parse error: {e}")
-    except Exception as e:
-        print(f"TN WS error: {e}")
-    finally:
-        with _tn_lock:
-            if _tn_ws is ws:
-                _tn_ws = None
-        print("TN disconnected")
+@app.route('/tn/poll')
+def tn_poll():
+    """TN calls this to pick up pending commands. Long-polls for up to 25s."""
+    secret = request.args.get('secret') or request.headers.get('X-Secret')
+    if secret != TN_SECRET:
+        return jsonify({'error': 'unauthorized'}), 403
+    
+    _last_poll[0] = _time.time()
+    deadline = _time.time() + 25  # long-poll timeout
+    
+    while _time.time() < deadline:
+        with _queue_lock:
+            if _cmd_queue:
+                item = _cmd_queue.pop(0)
+                return jsonify({'cmd': item})
+        _time.sleep(0.3)
+    
+    return jsonify({'cmd': None})  # nothing in time — TN should poll again
+
+@app.route('/tn/result', methods=['POST'])
+def tn_result():
+    """TN posts command result here."""
+    secret = request.headers.get('X-Secret') or request.args.get('secret')
+    if secret != TN_SECRET:
+        return jsonify({'error': 'unauthorized'}), 403
+    
+    data = request.get_json()
+    cmd_id = data.get('id')
+    result = data.get('result', {})
+    
+    _results[cmd_id] = result
+    if cmd_id in _events:
+        _events[cmd_id].set()
+    
+    return jsonify({'ok': True})
 
 @app.route('/tn/cmd', methods=['POST'])
 def tn_command():
+    """Agent calls this to run a command on TN."""
     data = request.get_json()
     if not data or data.get('secret') != AGENT_SECRET:
         return jsonify({'error': 'unauthorized'}), 403
-    with _tn_lock:
-        ws = _tn_ws
-    if ws is None:
-        return jsonify({'error': 'TN not connected'}), 503
+    
+    if _time.time() - _last_poll[0] > 35:
+        return jsonify({'error': 'TN not connected (no recent poll)'}), 503
+    
     cmd     = data.get('cmd', '')
     timeout = int(data.get('timeout', 30))
     cmd_id  = str(uuid.uuid4())
     event   = threading.Event()
-    _pending[cmd_id] = event
-    try:
-        ws.send(json.dumps({'id': cmd_id, 'cmd': cmd}))
-        fired = event.wait(timeout=timeout)
-        if not fired:
-            _pending.pop(cmd_id, None)
-            return jsonify({'error': 'timeout'}), 504
-        result = _results.pop(cmd_id, {})
-        _pending.pop(cmd_id, None)
-        return jsonify(result)
-    except Exception as e:
-        _pending.pop(cmd_id, None)
-        return jsonify({'error': str(e)}), 500
+    _events[cmd_id] = event
+    
+    with _queue_lock:
+        _cmd_queue.append({'id': cmd_id, 'cmd': cmd})
+    
+    fired = event.wait(timeout=timeout)
+    _events.pop(cmd_id, None)
+    
+    if not fired:
+        with _queue_lock:
+            for i, item in enumerate(_cmd_queue):
+                if item.get('id') == cmd_id:
+                    _cmd_queue.pop(i)
+                    break
+        return jsonify({'error': 'timeout'}), 504
+    
+    result = _results.pop(cmd_id, {})
+    return jsonify(result)
 
 @app.route('/tn/status')
 def tn_status():
-    return jsonify({'tn_connected': _tn_ws is not None})
-
-
-# ── ENTRY POINT ────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
+    connected = (_time.time() - _last_poll[0]) < 35
+    return jsonify({'tn_connected': connected, 'last_poll_ago': round(_time.time() - _last_poll[0], 1)})
