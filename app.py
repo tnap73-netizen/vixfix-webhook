@@ -578,9 +578,25 @@ def terms():
 
 @app.route('/get/bbg')
 def serve_bbg_basket():
-    from flask import Response, send_file
+    from flask import send_file
     import os
     path = os.path.join(os.path.dirname(__file__), 'bbg_basket.py')
+    return send_file(path, mimetype='text/plain', as_attachment=False)
+
+
+@app.route('/get/screenshot')
+def serve_screenshot_script():
+    from flask import send_file
+    import os
+    path = os.path.join(os.path.dirname(__file__), 'screenshot_canvas.py')
+    return send_file(path, mimetype='text/plain', as_attachment=False)
+
+
+@app.route('/get/fetch')
+def serve_fetch_script():
+    from flask import send_file
+    import os
+    path = os.path.join(os.path.dirname(__file__), 'fetch_output.py')
     return send_file(path, mimetype='text/plain', as_attachment=False)
 
 
