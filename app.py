@@ -643,6 +643,14 @@ def serve_all_script():
     return send_file(path, mimetype='text/plain', as_attachment=False)
 
 
+@app.route('/get/s3short')
+def serve_s3short():
+    from flask import send_file
+    import os
+    path = os.path.join(os.path.dirname(__file__), 's3_short.py')
+    return send_file(path, mimetype='text/plain', as_attachment=False)
+
+
 @app.route('/get/s3test')
 def serve_s3test():
     from flask import send_file
