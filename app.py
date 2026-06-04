@@ -36,6 +36,7 @@ _tn_cmd_queue   = []          # pending commands for TN
 _tn_results     = {}          # cmd_id -> result
 _tn_events      = {}          # cmd_id -> threading.Event
 _tn_last_poll   = None        # epoch of last TN poll — None until first poll received
+_TN_POLL_FILE   = '/tmp/tn_last_poll.txt'  # shared across gunicorn workers
 BRIDGE_SECRET   = os.environ.get('BRIDGE_SECRET', 'BGSM2024')
 
 def _check_secret(req):
@@ -478,14 +479,28 @@ def test_alert(ticker):
 
 # ── TN BRIDGE ENDPOINTS ───────────────────────────────────────────────────────────
 
+def _read_tn_poll_time():
+    try:
+        with open(_TN_POLL_FILE, 'r') as f:
+            return float(f.read().strip())
+    except:
+        return None
+
+def _write_tn_poll_time(t):
+    try:
+        with open(_TN_POLL_FILE, 'w') as f:
+            f.write(str(t))
+    except:
+        pass
+
 @app.route('/tn/status')
 def tn_status():
-    global _tn_last_poll
-    if _tn_last_poll is None:
+    last = _read_tn_poll_time()
+    if last is None:
         connected  = False
         poll_ago   = None
     else:
-        poll_ago   = round(time.time() - _tn_last_poll, 1)
+        poll_ago   = round(time.time() - last, 1)
         connected  = poll_ago < 15
     return jsonify({
         'tn_connected': connected,
@@ -497,10 +512,9 @@ def tn_status():
 @app.route('/tn/poll')
 def tn_poll():
     """TN client polls here. Returns next command or empty immediately."""
-    global _tn_last_poll
     if not _check_secret(request):
         return jsonify({'error': 'unauthorized'}), 403
-    _tn_last_poll = time.time()
+    _write_tn_poll_time(time.time())  # shared file — visible to all gunicorn workers
     with _tn_lock:
         if _tn_cmd_queue:
             item = _tn_cmd_queue.pop(0)
