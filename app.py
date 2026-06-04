@@ -667,6 +667,14 @@ def serve_fieldtest_script():
     return send_file(path, mimetype='text/plain', as_attachment=False)
 
 
+@app.route('/get/sifind')
+def serve_sifind_script():
+    from flask import send_file
+    import os
+    path = os.path.join(os.path.dirname(__file__), 'si_field_discover.py')
+    return send_file(path, mimetype='text/plain', as_attachment=False)
+
+
 @app.route('/get/screenshot')
 def serve_screenshot_script():
     from flask import send_file
