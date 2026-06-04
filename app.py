@@ -35,7 +35,7 @@ _tn_lock        = threading.Lock()
 _tn_cmd_queue   = []          # pending commands for TN
 _tn_results     = {}          # cmd_id -> result
 _tn_events      = {}          # cmd_id -> threading.Event
-_tn_last_poll   = 0.0         # epoch of last TN poll
+_tn_last_poll   = None        # epoch of last TN poll — None until first poll received
 BRIDGE_SECRET   = os.environ.get('BRIDGE_SECRET', 'BGSM2024')
 
 def _check_secret(req):
@@ -481,10 +481,15 @@ def test_alert(ticker):
 @app.route('/tn/status')
 def tn_status():
     global _tn_last_poll
-    connected = (time.time() - _tn_last_poll) < 15
+    if _tn_last_poll is None:
+        connected  = False
+        poll_ago   = None
+    else:
+        poll_ago   = round(time.time() - _tn_last_poll, 1)
+        connected  = poll_ago < 15
     return jsonify({
         'tn_connected': connected,
-        'last_poll_ago': round(time.time() - _tn_last_poll, 1),
+        'last_poll_ago': poll_ago,
         'pending_cmds': len(_tn_cmd_queue),
     }), 200
 
