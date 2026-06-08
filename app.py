@@ -699,3 +699,88 @@ def serve_tn_client():
     return send_file(path, mimetype='text/plain', as_attachment=False)
 
 
+
+# ── SCHWAB OPTIONS CHAIN ───────────────────────────────────────────────────────
+
+@app.route("/schwab/options")
+def schwab_options():
+    """
+    Live options chain from Schwab.
+    Params:
+      symbol        — ticker (required), e.g. CC
+      expiration    — YYYY-MM-DD (optional), filter to single expiry
+      contract_type — CALL | PUT | ALL (default ALL)
+      strike_count  — number of strikes each side of ATM (default 20)
+    Returns cleaned JSON: bid, ask, IV, delta, OI, volume per strike.
+    """
+    symbol = request.args.get("symbol", "").upper()
+    if not symbol:
+        return jsonify({"error": "symbol param required"}), 400
+
+    expiration    = request.args.get("expiration", None)
+    contract_type = request.args.get("contract_type", "ALL").upper()
+    strike_count  = int(request.args.get("strike_count", 20))
+
+    try:
+        access_token = get_valid_token()
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 401
+
+    params = {
+        "symbol":                 symbol,
+        "contractType":           contract_type,
+        "strikeCount":            strike_count,
+        "includeUnderlyingQuote": True,
+        "strategy":               "SINGLE",
+    }
+    if expiration:
+        params["fromDate"] = expiration
+        params["toDate"]   = expiration
+
+    resp = requests.get(
+        f"{SCHWAB_MARKET_URL}/chains",
+        headers={"Authorization": f"Bearer {access_token}"},
+        params=params,
+        timeout=15,
+    )
+
+    if resp.status_code != 200:
+        return jsonify({"error": f"Schwab API {resp.status_code}", "detail": resp.text}), resp.status_code
+
+    raw = resp.json()
+
+    uq = raw.get("underlyingQuote") or raw.get("underlying") or {}
+    underlying_price = uq.get("last") or uq.get("mark") or uq.get("close")
+
+    def parse_leg(exp_map):
+        parsed = {}
+        for exp_key, strikes in exp_map.items():
+            exp_date = exp_key.split(":")[0]
+            parsed[exp_date] = {}
+            for strike_str, contracts in strikes.items():
+                strike = float(strike_str)
+                c = contracts[0] if contracts else {}
+                parsed[exp_date][strike] = {
+                    "bid":         c.get("bid"),
+                    "ask":         c.get("ask"),
+                    "last":        c.get("last"),
+                    "mark":        c.get("mark"),
+                    "iv":          round(c.get("volatility", 0), 2) if c.get("volatility") else None,
+                    "delta":       round(c.get("delta", 0), 4) if c.get("delta") else None,
+                    "theta":       round(c.get("theta", 0), 4) if c.get("theta") else None,
+                    "oi":          c.get("openInterest"),
+                    "volume":      c.get("totalVolume"),
+                    "itm":         c.get("inTheMoney"),
+                    "description": c.get("description"),
+                }
+        return parsed
+
+    result = {
+        "symbol":           symbol,
+        "underlying_price": underlying_price,
+        "status":           raw.get("status"),
+        "calls":            parse_leg(raw.get("callExpDateMap", {})) if contract_type in ("CALL", "ALL") else {},
+        "puts":             parse_leg(raw.get("putExpDateMap", {}))  if contract_type in ("PUT",  "ALL") else {},
+    }
+
+    return jsonify(result), 200
