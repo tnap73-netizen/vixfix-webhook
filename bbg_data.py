@@ -176,8 +176,20 @@ elif BASKET == 2:
         "BEST_PE_RATIO", "BEST_EPS", "BEST_SALES",
         "EV_TO_T12M_EBITDA", "CURRENT_TRR_1YR",
         "RETURN_COM_EQY", "GROSS_MARGIN", "PROF_MARGIN",
-        "EQY_DVD_YLD_12M", "IS_EPS"
+        "EQY_DVD_YLD_12M", "IS_EPS",
+        "CF_RETURN", "EARN_RETURN", "PE_RETURN", "DIV_RETURN"
     ])
+    # Compute PE expansion % of total return
+    try:
+        pe_ret  = float(gf.get("PE_RETURN")  or 0)
+        ern_ret = float(gf.get("EARN_RETURN") or 0)
+        div_ret = float(gf.get("DIV_RETURN")  or 0)
+        total   = pe_ret + ern_ret + div_ret
+        gf["PE_PCT_OF_TOTAL_RETURN"] = round((pe_ret / total * 100), 1) if total != 0 else None
+        gf["GF_GATE"] = "HARD FAIL" if (gf["PE_PCT_OF_TOTAL_RETURN"] or 0) > 60 else "PASS"
+    except Exception:
+        gf["PE_PCT_OF_TOTAL_RETURN"] = None
+        gf["GF_GATE"] = "UNKNOWN"
     output["GF"] = gf
 
     # OWN — ownership and short interest (corrected field names)
