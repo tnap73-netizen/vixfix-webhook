@@ -13,6 +13,8 @@ Endpoints:
   GET  /schwab/keepalive   — silent token refresh (called by daily cron)
   GET  /schwab/positions   — all open positions across all accounts
   GET  /schwab/accounts    — account balances (net liq, buying power, P/L)
+  GET  /schwab/orders      — orders by account hashValue (fromEnteredTime, toEnteredTime, status, maxResults)
+  GET  /schwab/transactions— transactions by account hashValue (startDate, endDate, types, symbol)
   GET  /privacy             — BMCMS LLC Privacy Policy (public, for Twilio A2P)
   GET  /terms               — BMCMS LLC Terms of Service (public, for Twilio A2P)
 """
@@ -407,6 +409,179 @@ def schwab_accounts():
         })
 
     return jsonify({"accounts": results}), 200
+
+
+# ── SCHWAB TRADER (ORDERS + TRANSACTIONS) ─────────────────────────────────────
+
+def _schwab_iso(dt: datetime) -> str:
+    """Schwab Trader API expects ISO-8601 with milliseconds and Z, e.g. 2024-03-29T00:00:00.000Z."""
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _resolve_account(access_token: str, account_filter: str = None):
+    """
+    Resolve Schwab account hashValue via /accounts/accountNumbers.
+    Returns (hash_val, acct_num, error_response). On success error_response is None.
+    account_filter: optional last-4 (or full) accountNumber to pick a specific account;
+    defaults to the first account returned.
+    """
+    resp = requests.get(
+        f"{SCHWAB_TRADER_URL}/accounts/accountNumbers",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        return None, None, (
+            jsonify({"error": f"accountNumbers {resp.status_code}", "detail": resp.text}),
+            resp.status_code,
+        )
+
+    account_numbers = resp.json()
+    if not account_numbers:
+        return None, None, (jsonify({"error": "no accounts found"}), 404)
+
+    chosen = None
+    if account_filter:
+        for acct in account_numbers:
+            num = acct.get("accountNumber", "")
+            if num == account_filter or num.endswith(account_filter):
+                chosen = acct
+                break
+        if chosen is None:
+            return None, None, (
+                jsonify({"error": f"account '{account_filter}' not found"}),
+                404,
+            )
+    else:
+        chosen = account_numbers[0]
+
+    hash_val = chosen.get("hashValue")
+    acct_num = chosen.get("accountNumber")
+    if not hash_val:
+        return None, None, (jsonify({"error": "account missing hashValue"}), 502)
+
+    return hash_val, acct_num, None
+
+
+@app.route("/schwab/orders")
+def schwab_orders():
+    """
+    Orders for an account (resolved via accountNumbers hashValue).
+    Params:
+      account          — optional last-4 of accountNumber to select (default: first)
+      fromEnteredTime  — ISO-8601 or YYYY-MM-DD (default: 60 days ago)
+      toEnteredTime    — ISO-8601 or YYYY-MM-DD (default: now)
+      status           — optional order status filter (e.g. FILLED, WORKING, CANCELED)
+      maxResults       — optional cap on number of orders (default 100)
+    """
+    try:
+        access_token = get_valid_token()
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 401
+
+    hash_val, acct_num, err = _resolve_account(access_token, request.args.get("account"))
+    if err:
+        return err
+
+    from_entered = request.args.get("fromEnteredTime")
+    to_entered   = request.args.get("toEnteredTime")
+    if from_entered and len(from_entered) == 10:
+        from_entered = _schwab_iso(datetime.strptime(from_entered, "%Y-%m-%d"))
+    if to_entered and len(to_entered) == 10:
+        to_entered = _schwab_iso(datetime.strptime(to_entered, "%Y-%m-%d"))
+    if not from_entered:
+        from_entered = _schwab_iso(datetime.utcnow() - timedelta(days=60))
+    if not to_entered:
+        to_entered = _schwab_iso(datetime.utcnow())
+
+    params = {
+        "fromEnteredTime": from_entered,
+        "toEnteredTime":   to_entered,
+        "maxResults":      int(request.args.get("maxResults", 100)),
+    }
+    status = request.args.get("status")
+    if status:
+        params["status"] = status.upper()
+
+    resp = requests.get(
+        f"{SCHWAB_TRADER_URL}/accounts/{hash_val}/orders",
+        headers={"Authorization": f"Bearer {access_token}"},
+        params=params,
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        return jsonify({"error": f"Schwab API {resp.status_code}", "detail": resp.text}), resp.status_code
+
+    orders = resp.json()
+    return jsonify({
+        "account":     acct_num[-4:] if acct_num else "????",
+        "from":        from_entered,
+        "to":          to_entered,
+        "status":      status,
+        "count":       len(orders) if isinstance(orders, list) else None,
+        "orders":      orders,
+    }), 200
+
+
+@app.route("/schwab/transactions")
+def schwab_transactions():
+    """
+    Transactions for an account (resolved via accountNumbers hashValue).
+    Params:
+      account    — optional last-4 of accountNumber to select (default: first)
+      startDate  — ISO-8601 or YYYY-MM-DD (default: 30 days ago)
+      endDate    — ISO-8601 or YYYY-MM-DD (default: now)
+      types      — optional transaction type filter (e.g. TRADE, DIVIDEND_OR_INTEREST)
+      symbol     — optional symbol filter
+    """
+    try:
+        access_token = get_valid_token()
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 401
+
+    hash_val, acct_num, err = _resolve_account(access_token, request.args.get("account"))
+    if err:
+        return err
+
+    start_date = request.args.get("startDate")
+    end_date   = request.args.get("endDate")
+    if start_date and len(start_date) == 10:
+        start_date = _schwab_iso(datetime.strptime(start_date, "%Y-%m-%d"))
+    if end_date and len(end_date) == 10:
+        end_date = _schwab_iso(datetime.strptime(end_date, "%Y-%m-%d"))
+    if not start_date:
+        start_date = _schwab_iso(datetime.utcnow() - timedelta(days=30))
+    if not end_date:
+        end_date = _schwab_iso(datetime.utcnow())
+
+    params = {
+        "startDate": start_date,
+        "endDate":   end_date,
+        "types":     request.args.get("types", "TRADE"),
+    }
+    symbol = request.args.get("symbol")
+    if symbol:
+        params["symbol"] = symbol.upper()
+
+    resp = requests.get(
+        f"{SCHWAB_TRADER_URL}/accounts/{hash_val}/transactions",
+        headers={"Authorization": f"Bearer {access_token}"},
+        params=params,
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        return jsonify({"error": f"Schwab API {resp.status_code}", "detail": resp.text}), resp.status_code
+
+    transactions = resp.json()
+    return jsonify({
+        "account":      acct_num[-4:] if acct_num else "????",
+        "startDate":    start_date,
+        "endDate":      end_date,
+        "types":        params["types"],
+        "symbol":       symbol,
+        "count":        len(transactions) if isinstance(transactions, list) else None,
+        "transactions": transactions,
+    }), 200
 
 
 # ── WEBHOOK ────────────────────────────────────────────────────────────────────
