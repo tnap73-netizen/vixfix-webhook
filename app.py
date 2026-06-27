@@ -534,6 +534,60 @@ def _txn_matches_symbol(node, symbol_upper: str) -> bool:
     return False
 
 
+# Per-account upstream fetch hardened against timeouts / request failures so one slow
+# account (e.g. a large maxResults date range) cannot turn into a Flask 500. Returns
+# (records_list, error_dict). On success error_dict is None; on failure records is [].
+# error_dict carries accountLast4, an error label, an HTTP status to surface (504 for
+# timeout, 502 for request/JSON failure, the upstream code for a non-200), and a message.
+def _fetch_account_collection(access_token, hash_val, resource, params, last4):
+    try:
+        resp = requests.get(
+            f"{SCHWAB_TRADER_URL}/accounts/{hash_val}/{resource}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params=params,
+            timeout=15,
+        )
+    except requests.exceptions.Timeout as e:
+        return [], {"accountLast4": last4, "error": "timeout", "status": 504, "message": str(e)}
+    except requests.exceptions.RequestException as e:
+        return [], {"accountLast4": last4, "error": "request_failed", "status": 502, "message": str(e)}
+
+    if resp.status_code != 200:
+        return [], {
+            "accountLast4": last4,
+            "error": f"Schwab API {resp.status_code}",
+            "status": resp.status_code,
+            "message": resp.text,
+        }
+
+    try:
+        data = resp.json()
+    except ValueError as e:
+        return [], {"accountLast4": last4, "error": "invalid_json", "status": 502, "message": str(e)}
+
+    return (data if isinstance(data, list) else []), None
+
+
+def _single_account_error(err):
+    """Single-account request: surface the upstream failure as JSON (504 timeout / 502
+    request failure / upstream status), never a Flask 500."""
+    return jsonify({
+        "error":        err["error"],
+        "detail":       err["message"],
+        "accountLast4": err["accountLast4"],
+    }), err["status"]
+
+
+def _all_accounts_failed(account_errors, base):
+    """Every queried account failed — pick 504 if any timed out, else 502."""
+    code = 504 if any(e["status"] == 504 for e in account_errors) else 502
+    body = dict(base)
+    body["error"] = "all accounts failed"
+    body["partial"] = False
+    body["accountErrors"] = account_errors
+    return jsonify(body), code
+
+
 @app.route("/schwab/orders")
 def schwab_orders():
     """
@@ -577,33 +631,52 @@ def schwab_orders():
 
     merged = []
     queried = []
+    account_errors = []
     for hash_val, acct_num in targets:
         last4 = acct_num[-4:] if acct_num else "????"
         queried.append(last4)
-        resp = requests.get(
-            f"{SCHWAB_TRADER_URL}/accounts/{hash_val}/orders",
-            headers={"Authorization": f"Bearer {access_token}"},
-            params=params,
-            timeout=15,
+        orders, acc_err = _fetch_account_collection(
+            access_token, hash_val, "orders", params, last4
         )
-        if resp.status_code != 200:
-            return jsonify({"error": f"Schwab API {resp.status_code}", "detail": resp.text}), resp.status_code
+        if acc_err:
+            account_errors.append(acc_err)
+            continue
+        for order in orders:
+            if isinstance(order, dict):
+                order.setdefault("accountLast4", last4)
+        merged.extend(orders)
 
-        orders = resp.json()
-        if isinstance(orders, list):
-            for order in orders:
-                if isinstance(order, dict):
-                    order.setdefault("accountLast4", last4)
-            merged.extend(orders)
+    # Single-account: convert upstream failure into JSON error (no Flask 500).
+    if account_filter:
+        if account_errors:
+            return _single_account_error(account_errors[0])
+        return jsonify({
+            "account":  queried[0] if queried else None,
+            "accounts": queried,
+            "from":     from_entered,
+            "to":       to_entered,
+            "status":   status,
+            "count":    len(merged),
+            "orders":   merged,
+        }), 200
+
+    # Multi-account: 200 if at least one account succeeded; non-200 only if all failed.
+    if account_errors and len(account_errors) == len(targets):
+        return _all_accounts_failed(account_errors, {
+            "accounts": queried, "from": from_entered, "to": to_entered,
+            "status": status, "count": 0, "orders": [],
+        })
 
     return jsonify({
-        "account":     queried[0] if account_filter else "ALL",
-        "accounts":    queried,
-        "from":        from_entered,
-        "to":          to_entered,
-        "status":      status,
-        "count":       len(merged),
-        "orders":      merged,
+        "account":      "ALL",
+        "accounts":     queried,
+        "from":         from_entered,
+        "to":           to_entered,
+        "status":       status,
+        "count":        len(merged),
+        "orders":       merged,
+        "partial":      bool(account_errors),
+        "accountErrors": account_errors,
     }), 200
 
 
@@ -652,38 +725,58 @@ def schwab_transactions():
 
     merged = []
     queried = []
+    account_errors = []
     for hash_val, acct_num in targets:
         last4 = acct_num[-4:] if acct_num else "????"
         queried.append(last4)
-        resp = requests.get(
-            f"{SCHWAB_TRADER_URL}/accounts/{hash_val}/transactions",
-            headers={"Authorization": f"Bearer {access_token}"},
-            params=params,
-            timeout=15,
+        transactions, acc_err = _fetch_account_collection(
+            access_token, hash_val, "transactions", params, last4
         )
-        if resp.status_code != 200:
-            return jsonify({"error": f"Schwab API {resp.status_code}", "detail": resp.text}), resp.status_code
-
-        transactions = resp.json()
-        if isinstance(transactions, list):
-            for txn in transactions:
-                if isinstance(txn, dict):
-                    txn.setdefault("accountLast4", last4)
-            merged.extend(transactions)
+        if acc_err:
+            account_errors.append(acc_err)
+            continue
+        for txn in transactions:
+            if isinstance(txn, dict):
+                txn.setdefault("accountLast4", last4)
+        merged.extend(transactions)
 
     if symbol:
         symbol_upper = symbol.upper()
         merged = [txn for txn in merged if _txn_matches_symbol(txn, symbol_upper)]
 
+    # Single-account: convert upstream failure into JSON error (no Flask 500).
+    if account_filter:
+        if account_errors:
+            return _single_account_error(account_errors[0])
+        return jsonify({
+            "account":      queried[0] if queried else None,
+            "accounts":     queried,
+            "startDate":    start_date,
+            "endDate":      end_date,
+            "types":        types,
+            "symbol":       symbol,
+            "count":        len(merged),
+            "transactions": merged,
+        }), 200
+
+    # Multi-account: 200 if at least one account succeeded; non-200 only if all failed.
+    if account_errors and len(account_errors) == len(targets):
+        return _all_accounts_failed(account_errors, {
+            "accounts": queried, "startDate": start_date, "endDate": end_date,
+            "types": types, "symbol": symbol, "count": 0, "transactions": [],
+        })
+
     return jsonify({
-        "account":      queried[0] if account_filter else "ALL",
-        "accounts":     queried,
-        "startDate":    start_date,
-        "endDate":      end_date,
-        "types":        types,
-        "symbol":       symbol,
-        "count":        len(merged),
-        "transactions": merged,
+        "account":       "ALL",
+        "accounts":      queried,
+        "startDate":     start_date,
+        "endDate":       end_date,
+        "types":         types,
+        "symbol":        symbol,
+        "count":         len(merged),
+        "transactions":  merged,
+        "partial":       bool(account_errors),
+        "accountErrors": account_errors,
     }), 200
 
 
