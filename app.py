@@ -418,12 +418,10 @@ def _schwab_iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
-def _resolve_account(access_token: str, account_filter: str = None):
+def _fetch_account_numbers(access_token: str):
     """
-    Resolve Schwab account hashValue via /accounts/accountNumbers.
-    Returns (hash_val, acct_num, error_response). On success error_response is None.
-    account_filter: optional last-4 (or full) accountNumber to pick a specific account;
-    defaults to the first account returned.
+    Fetch the raw /accounts/accountNumbers list.
+    Returns (accounts_list, error_response). On success error_response is None.
     """
     resp = requests.get(
         f"{SCHWAB_TRADER_URL}/accounts/accountNumbers",
@@ -431,14 +429,28 @@ def _resolve_account(access_token: str, account_filter: str = None):
         timeout=15,
     )
     if resp.status_code != 200:
-        return None, None, (
+        return None, (
             jsonify({"error": f"accountNumbers {resp.status_code}", "detail": resp.text}),
             resp.status_code,
         )
 
     account_numbers = resp.json()
     if not account_numbers:
-        return None, None, (jsonify({"error": "no accounts found"}), 404)
+        return None, (jsonify({"error": "no accounts found"}), 404)
+
+    return account_numbers, None
+
+
+def _resolve_account(access_token: str, account_filter: str = None):
+    """
+    Resolve Schwab account hashValue via /accounts/accountNumbers.
+    Returns (hash_val, acct_num, error_response). On success error_response is None.
+    account_filter: optional last-4 (or full) accountNumber to pick a specific account;
+    defaults to the first account returned.
+    """
+    account_numbers, err = _fetch_account_numbers(access_token)
+    if err:
+        return None, None, err
 
     chosen = None
     if account_filter:
@@ -463,6 +475,65 @@ def _resolve_account(access_token: str, account_filter: str = None):
     return hash_val, acct_num, None
 
 
+def _account_targets(access_token: str, account_filter: str = None):
+    """
+    Build the list of accounts to query.
+    If account_filter is given, resolve that single account (preserving prior behavior).
+    If omitted, return every account from /accounts/accountNumbers so callers can merge
+    across accounts — first-account default is insufficient now that HTZ lives in 5683
+    while the first account returned is 2728.
+    Returns (targets, error_response) where targets is a list of (hash_val, acct_num).
+    """
+    if account_filter:
+        hash_val, acct_num, err = _resolve_account(access_token, account_filter)
+        if err:
+            return None, err
+        return [(hash_val, acct_num)], None
+
+    account_numbers, err = _fetch_account_numbers(access_token)
+    if err:
+        return None, err
+    targets = [
+        (a.get("hashValue"), a.get("accountNumber"))
+        for a in account_numbers
+        if a.get("hashValue")
+    ]
+    if not targets:
+        return None, (jsonify({"error": "account missing hashValue"}), 502)
+    return targets, None
+
+
+# Schwab's transactions endpoint does NOT filter option transferItems by underlying
+# symbol: querying ?symbol=HTZ returns 0 hits because an option's OCC symbol looks like
+# 'HTZ   270115C00005000', not 'HTZ'. So we never pass `symbol` to Schwab — we fetch
+# unfiltered and match app-side. This walks a transaction recursively and matches the
+# underlying anywhere it can appear: instrument symbol / underlyingSymbol / rootSymbol /
+# uniformSymbol / description, plus nested deliverables and transferItems.
+_TXN_SYMBOL_FIELDS = (
+    "symbol",
+    "underlyingSymbol",
+    "rootSymbol",
+    "uniformSymbol",
+    "description",
+)
+
+
+def _txn_matches_symbol(node, symbol_upper: str) -> bool:
+    if isinstance(node, dict):
+        for field in _TXN_SYMBOL_FIELDS:
+            val = node.get(field)
+            if isinstance(val, str) and symbol_upper in val.upper():
+                return True
+        for val in node.values():
+            if _txn_matches_symbol(val, symbol_upper):
+                return True
+    elif isinstance(node, list):
+        for item in node:
+            if _txn_matches_symbol(item, symbol_upper):
+                return True
+    return False
+
+
 @app.route("/schwab/orders")
 def schwab_orders():
     """
@@ -479,7 +550,8 @@ def schwab_orders():
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 401
 
-    hash_val, acct_num, err = _resolve_account(access_token, request.args.get("account"))
+    account_filter = request.args.get("account")
+    targets, err = _account_targets(access_token, account_filter)
     if err:
         return err
 
@@ -503,23 +575,35 @@ def schwab_orders():
     if status:
         params["status"] = status.upper()
 
-    resp = requests.get(
-        f"{SCHWAB_TRADER_URL}/accounts/{hash_val}/orders",
-        headers={"Authorization": f"Bearer {access_token}"},
-        params=params,
-        timeout=15,
-    )
-    if resp.status_code != 200:
-        return jsonify({"error": f"Schwab API {resp.status_code}", "detail": resp.text}), resp.status_code
+    merged = []
+    queried = []
+    for hash_val, acct_num in targets:
+        last4 = acct_num[-4:] if acct_num else "????"
+        queried.append(last4)
+        resp = requests.get(
+            f"{SCHWAB_TRADER_URL}/accounts/{hash_val}/orders",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params=params,
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return jsonify({"error": f"Schwab API {resp.status_code}", "detail": resp.text}), resp.status_code
 
-    orders = resp.json()
+        orders = resp.json()
+        if isinstance(orders, list):
+            for order in orders:
+                if isinstance(order, dict):
+                    order.setdefault("accountLast4", last4)
+            merged.extend(orders)
+
     return jsonify({
-        "account":     acct_num[-4:] if acct_num else "????",
+        "account":     queried[0] if account_filter else "ALL",
+        "accounts":    queried,
         "from":        from_entered,
         "to":          to_entered,
         "status":      status,
-        "count":       len(orders) if isinstance(orders, list) else None,
-        "orders":      orders,
+        "count":       len(merged),
+        "orders":      merged,
     }), 200
 
 
@@ -539,7 +623,8 @@ def schwab_transactions():
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 401
 
-    hash_val, acct_num, err = _resolve_account(access_token, request.args.get("account"))
+    account_filter = request.args.get("account")
+    targets, err = _account_targets(access_token, account_filter)
     if err:
         return err
 
@@ -554,33 +639,51 @@ def schwab_transactions():
     if not end_date:
         end_date = _schwab_iso(datetime.utcnow())
 
+    types = request.args.get("types", "TRADE")
+    # NOTE: `symbol` is intentionally NOT forwarded to Schwab — its API misses option
+    # transferItems by underlying (see _txn_matches_symbol). We fetch by date/types only
+    # and filter app-side below.
     params = {
         "startDate": start_date,
         "endDate":   end_date,
-        "types":     request.args.get("types", "TRADE"),
+        "types":     types,
     }
     symbol = request.args.get("symbol")
+
+    merged = []
+    queried = []
+    for hash_val, acct_num in targets:
+        last4 = acct_num[-4:] if acct_num else "????"
+        queried.append(last4)
+        resp = requests.get(
+            f"{SCHWAB_TRADER_URL}/accounts/{hash_val}/transactions",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params=params,
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return jsonify({"error": f"Schwab API {resp.status_code}", "detail": resp.text}), resp.status_code
+
+        transactions = resp.json()
+        if isinstance(transactions, list):
+            for txn in transactions:
+                if isinstance(txn, dict):
+                    txn.setdefault("accountLast4", last4)
+            merged.extend(transactions)
+
     if symbol:
-        params["symbol"] = symbol.upper()
+        symbol_upper = symbol.upper()
+        merged = [txn for txn in merged if _txn_matches_symbol(txn, symbol_upper)]
 
-    resp = requests.get(
-        f"{SCHWAB_TRADER_URL}/accounts/{hash_val}/transactions",
-        headers={"Authorization": f"Bearer {access_token}"},
-        params=params,
-        timeout=15,
-    )
-    if resp.status_code != 200:
-        return jsonify({"error": f"Schwab API {resp.status_code}", "detail": resp.text}), resp.status_code
-
-    transactions = resp.json()
     return jsonify({
-        "account":      acct_num[-4:] if acct_num else "????",
+        "account":      queried[0] if account_filter else "ALL",
+        "accounts":     queried,
         "startDate":    start_date,
         "endDate":      end_date,
-        "types":        params["types"],
+        "types":        types,
         "symbol":       symbol,
-        "count":        len(transactions) if isinstance(transactions, list) else None,
-        "transactions": transactions,
+        "count":        len(merged),
+        "transactions": merged,
     }), 200
 
 
