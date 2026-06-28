@@ -1,6 +1,6 @@
 {
   "schema": "bmcmc.cron_registry.v1",
-  "updated_at": "2026-06-28T03:12:00-04:00",
+  "updated_at": "2026-06-28T11:57:03-04:00",
   "owner": "BMCMC LLC",
   "repo": "tnap73-netizen/vixfix-webhook",
   "railway": {
@@ -9,7 +9,13 @@
     "app_url": "https://web-production-76c25d.up.railway.app",
     "proof_service": "bmcmc-cron-proof",
     "proof_branch": "railway-cron-proof",
-    "proof_status": "verified_native_schedule_2026-06-28T00:30:00Z"
+    "proof_status": "verified_native_schedule_2026-06-28T00:30:00Z",
+    "market_health_service": "bmcmc-market-health",
+    "market_health_service_id": "9c60529c-0e0e-41dd-988c-cf7d9a6019fe",
+    "market_health_volume": "bmcmc-market-health-volume",
+    "market_health_volume_id": "aca12af7-1743-4202-b71c-97ea0b16334f",
+    "market_health_volume_mount": "/data",
+    "market_health_status": "railway_test_verified_production_pending"
   },
   "global_locks": [
     "verify_before_delete",
@@ -59,12 +65,12 @@
       "schedule_et": "08:30 ET Mon-Fri",
       "current_home": "perplexity_thread_5c34e5fe",
       "target_home": "delete_after_duplicate_resolution_or_repo_replacement_verified",
-      "status": "active_recovery_shim_replacement",
-      "delete_policy": "candidate_for_delete_after_aadcd5f8_authority_confirmed",
+      "status": "deleted_duplicate_after_aadcd5f8_authority_confirmed",
+      "delete_policy": "deleted_no_further_action",
       "notes": [
-        "This slot contains the replacement recovery-shim text.",
-        "It explicitly states original full v2 PEAD scanner artifact was missing.",
-        "It logs that the recovery shim is not the full v2 evaluator."
+        "Deleted after aadcd5f8 was confirmed as the original Protocol v2.0 PEAD slot.",
+        "Kept in registry as historical duplicate record only.",
+        "aadcd5f8 remains live until repo replacement is verified."
       ]
     },
     {
@@ -115,16 +121,36 @@
       "schedule_utc": "0 12-21 * * 1-5",
       "schedule_et": "Hourly 08:00-17:00 ET Mon-Fri during EDT",
       "current_home": "perplexity_thread_87180aee",
-      "target_home": "railway_native_cron_candidate_first_real_cutover",
-      "status": "repo_code_added_manual_sandbox_verified_old_task_still_live",
-      "delete_policy": "migrate_then_verify_then_delete",
+      "target_home": "railway_native_cron_bmcmc-market-health",
+      "status": "railway_test_verified_production_pending",
+      "delete_policy": "do_not_delete_until_monday_production_market_hours_railway_run_verified",
       "notes": [
         "Silent housekeeping task.",
-        "Writes edgar_speed_feeds/alerts/market_health.json.",
+        "Writes edgar_speed_feeds/alerts/market_health.json under BMCMC_EDGAR_ROOT.",
         "Repo-owned replacement entrypoint: scripts/market_health_refresh.py.",
         "Manual sandbox verification passed on 2026-06-28T03:11Z.",
-        "Old Perplexity task remains live until Railway native scheduled replacement is verified."
-      ]
+        "Railway test cron fired successfully at 2026-06-28T04:55:05Z and 2026-06-28T05:00:28Z with event=market_health_refreshed and regime=NEUTRAL.",
+        "Railway service switched back to production branch railway-market-health with schedule 0 12-21 * * 1-5.",
+        "Old Perplexity task e2d79a04 remains live until Monday production market-hours Railway run is verified."
+      ],
+      "railway_replacement": {
+        "project": "caring-happiness",
+        "service": "bmcmc-market-health",
+        "service_id": "9c60529c-0e0e-41dd-988c-cf7d9a6019fe",
+        "volume": "bmcmc-market-health-volume",
+        "volume_id": "aca12af7-1743-4202-b71c-97ea0b16334f",
+        "volume_mount": "/data",
+        "test_branch": "railway-market-health-test",
+        "test_schedule": "*/5 * * * *",
+        "test_verified_runs_utc": [
+          "2026-06-28T04:55:05Z",
+          "2026-06-28T05:00:28Z"
+        ],
+        "production_branch": "railway-market-health",
+        "production_deployment": "4ff580a0-417c-462b-a3d1-a7befba82b2f",
+        "production_schedule_utc": "0 12-21 * * 1-5",
+        "start_command": "python3 scripts/market_health_refresh.py"
+      }
     }
   ]
 }
