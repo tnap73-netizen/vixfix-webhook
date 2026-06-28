@@ -1,6 +1,6 @@
 {
   "schema": "bmcmc.cron_registry.v1",
-  "updated_at": "2026-06-28T02:01:00-04:00",
+  "updated_at": "2026-06-28T03:12:00-04:00",
   "owner": "BMCMC LLC",
   "repo": "tnap73-netizen/vixfix-webhook",
   "railway": {
@@ -116,14 +116,15 @@
       "schedule_et": "Hourly 08:00-17:00 ET Mon-Fri during EDT",
       "current_home": "perplexity_thread_87180aee",
       "target_home": "railway_native_cron_candidate_first_real_cutover",
-      "status": "active_hold_until_registry_committed",
+      "status": "repo_code_added_manual_sandbox_verified_old_task_still_live",
       "delete_policy": "migrate_then_verify_then_delete",
       "notes": [
         "Silent housekeeping task.",
         "Writes edgar_speed_feeds/alerts/market_health.json.",
-        "Hold cutover until this registry exists in repo."
+        "Repo-owned replacement entrypoint: scripts/market_health_refresh.py.",
+        "Manual sandbox verification passed on 2026-06-28T03:11Z.",
+        "Old Perplexity task remains live until Railway native scheduled replacement is verified."
       ]
     }
   ]
 }
-
