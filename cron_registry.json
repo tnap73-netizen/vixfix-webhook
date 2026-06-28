@@ -1,0 +1,129 @@
+{
+  "schema": "bmcmc.cron_registry.v1",
+  "updated_at": "2026-06-28T02:01:00-04:00",
+  "owner": "BMCMC LLC",
+  "repo": "tnap73-netizen/vixfix-webhook",
+  "railway": {
+    "project": "caring-happiness",
+    "service_web": "web",
+    "app_url": "https://web-production-76c25d.up.railway.app",
+    "proof_service": "bmcmc-cron-proof",
+    "proof_branch": "railway-cron-proof",
+    "proof_status": "verified_native_schedule_2026-06-28T00:30:00Z"
+  },
+  "global_locks": [
+    "verify_before_delete",
+    "no_custom_exec_endpoint",
+    "sms_only_for_bmcmc_trading_alerts",
+    "market_health_required_in_every_alert",
+    "watchdog_and_sms_drain_migrate_last",
+    "no_bloomberg_dependency_after_2026-06-29"
+  ],
+  "credential_audit": {
+    "railway_present": [
+      "SCHWAB_CLIENT_ID",
+      "SCHWAB_CLIENT_SECRET",
+      "QUANT_DATA_EMAIL",
+      "QUANT_DATA_PASS",
+      "FINVIZ_AUTH"
+    ],
+    "railway_missing_blockers": [
+      "MASSIVE_API_KEY",
+      "BENZINGA_API_KEY"
+    ],
+    "perplexity_custom_credential_required": [
+      "custom-cred:api.massive.com"
+    ]
+  },
+  "jobs": [
+    {
+      "id": "aadcd5f8",
+      "name": "BMCMC daily PEAD scan (2-wk paper test)",
+      "schedule_utc": "30 12 * * 1-5",
+      "schedule_et": "08:30 ET Mon-Fri",
+      "current_home": "perplexity_thread_87180aee",
+      "target_home": "railway_native_cron_after_secrets_and_full_code",
+      "status": "active_original_protocol_v2_text",
+      "delete_policy": "do_not_delete_until_repo_replacement_verified_or_user_confirms_duplicate_cleanup",
+      "notes": [
+        "This slot contains the original Protocol v2.0 scheduled-task text.",
+        "Uses custom-cred:api.massive.com for Massive/Benzinga auth injection.",
+        "Counts only FIRE or PEAD_ALERT records.",
+        "Alert composer enqueues each fire; summary SMS is appended only when fires > 0."
+      ]
+    },
+    {
+      "id": "aa59ac63",
+      "name": "BMCMC daily PEAD scan replacement",
+      "schedule_utc": "30 12 * * 1-5",
+      "schedule_et": "08:30 ET Mon-Fri",
+      "current_home": "perplexity_thread_5c34e5fe",
+      "target_home": "delete_after_duplicate_resolution_or_repo_replacement_verified",
+      "status": "active_recovery_shim_replacement",
+      "delete_policy": "candidate_for_delete_after_aadcd5f8_authority_confirmed",
+      "notes": [
+        "This slot contains the replacement recovery-shim text.",
+        "It explicitly states original full v2 PEAD scanner artifact was missing.",
+        "It logs that the recovery shim is not the full v2 evaluator."
+      ]
+    },
+    {
+      "id": "43e3532a",
+      "name": "EDGAR Speed Feeds (Form 4, 13D, 8-K)",
+      "schedule_utc": "*/5 12-21 * * 1-5",
+      "schedule_et": "Every 5 minutes 08:00-17:59 ET Mon-Fri during EDT",
+      "current_home": "perplexity_thread_87180aee",
+      "target_home": "railway_native_cron_after_code_and_sms_strategy",
+      "status": "active",
+      "delete_policy": "migrate_then_verify_then_delete",
+      "notes": [
+        "Reads alerts.jsonl and appends critical/watchlist items to sms_queue.jsonl.",
+        "Do not call send_notification."
+      ]
+    },
+    {
+      "id": "c688ccb1",
+      "name": "Watchlist monthly re-grade",
+      "schedule_utc": "30 12 1-7 * 1",
+      "schedule_et": "08:30 ET first Monday of month during EDT",
+      "current_home": "perplexity_thread_87180aee",
+      "target_home": "railway_or_github_after_code_source_confirmed",
+      "status": "active",
+      "delete_policy": "migrate_then_verify_then_delete",
+      "notes": [
+        "Routes promote/demote and cluster results to sms_queue.jsonl.",
+        "No in-app notifications."
+      ]
+    },
+    {
+      "id": "e141cdb1",
+      "name": "BMCMC SMS drain (Verizon gateway)",
+      "schedule_utc": "*/5 * * * *",
+      "schedule_et": "Every 5 minutes",
+      "current_home": "perplexity_thread_87180aee",
+      "target_home": "migrate_last_after_email_send_strategy_exists",
+      "status": "active",
+      "delete_policy": "migrate_last_verify_live_then_delete",
+      "notes": [
+        "Uses gcal send_email to 7187047511@vtext.com.",
+        "Railway cannot directly use Perplexity gcal connector, so replacement needs explicit email-send design."
+      ]
+    },
+    {
+      "id": "e2d79a04",
+      "name": "Market health refresh",
+      "schedule_utc": "0 12-21 * * 1-5",
+      "schedule_et": "Hourly 08:00-17:00 ET Mon-Fri during EDT",
+      "current_home": "perplexity_thread_87180aee",
+      "target_home": "railway_native_cron_candidate_first_real_cutover",
+      "status": "active_hold_until_registry_committed",
+      "delete_policy": "migrate_then_verify_then_delete",
+      "notes": [
+        "Silent housekeeping task.",
+        "Writes edgar_speed_feeds/alerts/market_health.json.",
+        "Hold cutover until this registry exists in repo."
+      ]
+    }
+  ]
+}
+
