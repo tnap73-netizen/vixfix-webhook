@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get("BMCMC_EDGAR_ROOT", Path(__file__).resolve().parents[1]))
 ALERTS_DIR = ROOT / "alerts"
 LOGS_DIR = ROOT / "logs"
 MARKET_HEALTH_PATH = ALERTS_DIR / "market_health.json"
