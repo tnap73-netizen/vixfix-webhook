@@ -11,6 +11,7 @@ Use this exact opener:
 ```text
 BMCMC LLC. Pull Hindsight context first. Then read the repo-owned bootstrap and registries before acting:
 - BMCMC_NEW_THREAD_BOOTSTRAP.md
+- BMCMC_THREAD_INDEPENDENCE_AUDIT.md
 - BMCMC_EDGE_DETECTOR_TWOSIDED_V3.md
 - BMCMC_SUBSCRIPTION_AND_BACKTEST_REGISTRY.md
 - cron_registry.json
@@ -49,6 +50,7 @@ Direct trading language. No filler. No emojis. Do not request new vendors before
 | File | Purpose |
 |---|---|
 | `BMCMC_NEW_THREAD_BOOTSTRAP.md` | This file. Start here in new threads. |
+| `BMCMC_THREAD_INDEPENDENCE_AUDIT.md` | Full-system audit for proving no single thread owns BMCMC operating context. |
 | `BMCMC_EDGE_DETECTOR_TWOSIDED_V3.md` | Canonical two-sided Edge Detector v3 implementation spec and run checklist. |
 | `BMCMC_SUBSCRIPTION_AND_BACKTEST_REGISTRY.md` | Space-canonical subscription map and required backtest data manifest rules. |
 | `cron_registry.json` | Migration ledger for old thread-owned scheduled tasks moving to repo/Railway ownership. |
