@@ -11,13 +11,14 @@ import urllib.error
 from datetime import datetime, timezone
 
 HEALTH_URL = os.environ.get("BMCMC_PROOF_HEALTH_URL", "https://web-production-76c25d.up.railway.app/health")
+# MASSIVE_API_KEY is the sole required trading-feed secret (unified Massive/Benzinga
+# key). BENZINGA_API_KEY is legacy/informational only and intentionally not tracked here.
 SECRET_KEYS = [
     "SCHWAB_CLIENT_ID",
     "SCHWAB_CLIENT_SECRET",
     "QUANT_DATA_EMAIL",
     "QUANT_DATA_PASS",
     "MASSIVE_API_KEY",
-    "BENZINGA_API_KEY",
     "FINVIZ_AUTH",
     "BMCMC_PROOF_SENTINEL",
 ]

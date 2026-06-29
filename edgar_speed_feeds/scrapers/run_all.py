@@ -83,9 +83,9 @@ def run(force=False, limit=100):
 
     _log("run_all start (force=%s, limit=%s) -- recovery shim" % (force, limit))
     _log(
-        "TLS NOTE: verify disabled only for api.massive.com (platform custom-cred "
-        "proxy self-signed chain). Not acceptable as permanent production behavior "
-        "unless replaced with a proper CA bundle."
+        "TLS NOTE: verification enabled (REQUESTS_CA_BUNDLE/SSL_CERT_FILE, else "
+        "certifi, else system trust). Auth: MASSIVE_API_KEY header when set, else "
+        "proxy-injected credential."
     )
 
     result = scan_all(limit=limit)

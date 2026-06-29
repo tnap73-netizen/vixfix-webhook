@@ -25,28 +25,24 @@ evaluator and does not attempt to reproduce its scoring/evaluation logic.
 
 ## Authentication
 
-Credentials are **injected at the proxy layer** (Massive + Benzinga custom
-credential, verified with HTTP 200 on `/benzinga/v1/ratings` using
-`custom-cred:api.massive.com`). This code does **not** read or require raw
-API keys, and never prints secrets. Because it uses `requests`/`urllib`,
-`HTTPS_PROXY` credential injection works transparently.
+One unified key (doctrine): **`MASSIVE_API_KEY`** covers Massive/Benzinga
+access (earnings, guidance, ratings) via `api.massive.com`.
 
-## TLS verification (recovery shim only)
+- When `MASSIVE_API_KEY` is set, the scanner authenticates explicitly with
+  `Authorization: Bearer <key>` (override the header name with
+  `MASSIVE_API_KEY_HEADER` for non-Bearer schemes).
+- When no key is set, no auth header is sent, preserving **proxy-injection /
+  no-key** behavior for Perplexity `custom-cred:api.massive.com` environments.
+- `BENZINGA_API_KEY` is an **optional legacy fallback** credential value only;
+  it is never required and is not canonical.
 
-The platform custom-cred proxy presents a **self-signed certificate chain**,
-which makes `requests` raise `SSLCertVerificationError` even though a direct
-`curl` to the same endpoint returns HTTP 200. As a recovery measure this shim
-**disables TLS verification only for `api.massive.com`**:
+The key is never printed or logged.
 
-- `requests`: `verify=False` with the urllib3 `InsecureRequestWarning`
-  suppressed for those calls only.
-- `urllib` fallback: an unverified SSL context for those calls only.
+## TLS verification
 
-All other hosts keep normal verification. **This is not acceptable as
-permanent production scanner behavior.** The proper fix is to point
-requests/urllib at the proxy's CA bundle (e.g. via `certifi` or
-`REQUESTS_CA_BUNDLE`) so the self-signed chain validates, then re-enable
-verification.
+Verification is **always on**. The scanner honors `REQUESTS_CA_BUNDLE` /
+`SSL_CERT_FILE` when set, otherwise uses `certifi`'s bundle when available,
+otherwise system trust. TLS verification is **never globally disabled**.
 
 ## Explicitly out of scope
 

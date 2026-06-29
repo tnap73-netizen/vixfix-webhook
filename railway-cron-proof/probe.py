@@ -4,6 +4,8 @@ import sys
 import time
 import urllib.request
 
+# MASSIVE_API_KEY is the sole required trading-feed secret (unified Massive/Benzinga
+# key). BENZINGA_API_KEY is legacy/informational only and intentionally not tracked here.
 CHECK_KEYS = [
     "BMCMC_PROOF_SENTINEL",
     "SCHWAB_CLIENT_ID",
@@ -11,7 +13,6 @@ CHECK_KEYS = [
     "QUANT_DATA_EMAIL",
     "QUANT_DATA_PASS",
     "MASSIVE_API_KEY",
-    "BENZINGA_API_KEY",
     "FINVIZ_AUTH",
 ]
 

@@ -17,8 +17,8 @@ class Check:
 
 
 CHECKS = [
-    Check("Massive API", "MASSIVE_API_KEY", True, "Required for Railway full ESS / PEAD Benzinga-via-Massive access."),
-    Check("Benzinga API", "BENZINGA_API_KEY", True, "Required for guidance and analyst/PT revision components."),
+    Check("Massive API", "MASSIVE_API_KEY", True, "Sole required trading-feed secret for strict ESS. Unified key for Massive/Benzinga (earnings, guidance, ratings) via api.massive.com."),
+    Check("Benzinga API", "BENZINGA_API_KEY", False, "Legacy/informational only. NOT required: Benzinga access is covered by the unified MASSIVE_API_KEY. Optional fallback for old standalone-key paths."),
     Check("Schwab client id", "SCHWAB_CLIENT_ID", False, "Required for Schwab reporting routes on the web service."),
     Check("Schwab client secret", "SCHWAB_CLIENT_SECRET", False, "Required for Schwab OAuth refresh/re-auth."),
     Check("BMCMC EDGAR root", "BMCMC_EDGAR_ROOT", False, "Required for Railway volume-backed market-health output when not using repo-local paths."),

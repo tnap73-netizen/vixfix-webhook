@@ -1,29 +1,30 @@
 """Minimal Benzinga scanner recovery shim.
 
-Fetches Massive-proxied Benzinga endpoints using `requests` (so an
-HTTPS_PROXY-based credential injection works transparently) and falls
-back to `urllib` if `requests` is not installed.
+Fetches Massive-proxied Benzinga endpoints using `requests` (falling back
+to `urllib` if `requests` is not installed).
 
-This module does NOT read or require raw API keys. Authentication is
-expected to be injected by the parent at the proxy layer (Massive +
-Benzinga custom credential). We never print secrets.
+Authentication (doctrine: one unified key — see SUBSCRIPTION_REGISTRY.md):
+  * When ``MASSIVE_API_KEY`` is present in the environment the scanner
+    authenticates explicitly using Massive's expected scheme
+    (``Authorization: Bearer <key>`` by default; the header name can be
+    overridden with ``MASSIVE_API_KEY_HEADER`` for non-Bearer schemes).
+  * When no key is set we send no auth header, preserving the
+    proxy-injection / no-key behavior used in Perplexity custom-cred
+    environments (``custom-cred:api.massive.com``).
+  * ``BENZINGA_API_KEY`` is consulted only as an optional legacy fallback
+    credential value. It is never required and is not canonical.
+We never print or log the key.
 
-TLS NOTE (recovery shim only): the platform custom-cred proxy presents a
-self-signed certificate chain, which makes `requests` raise
-SSLCertVerificationError even though direct curl to the same endpoint
-returns HTTP 200. As a recovery measure this shim disables TLS
-verification *only* for api.massive.com calls (requests `verify=False`
-with the urllib3 InsecureRequestWarning suppressed, and an unverified SSL
-context for the urllib fallback). This is NOT acceptable as permanent
-production scanner behavior; the real fix is to point requests/urllib at
-the proxy's CA bundle (e.g. via certifi or REQUESTS_CA_BUNDLE) so the
-self-signed chain validates.
+TLS: verification is always on. We honor ``REQUESTS_CA_BUNDLE`` /
+``SSL_CERT_FILE`` when set, otherwise use certifi's bundle when available,
+otherwise system trust. TLS verification is never globally disabled.
 
 This is a recovery shim, not the original v2 PEAD evaluator.
 """
 
 from __future__ import annotations
 
+import os
 import json
 import datetime as _dt
 from urllib.parse import urlencode
@@ -38,19 +39,39 @@ ENDPOINTS = {
 
 _TIMEOUT = 30
 
-# Hosts for which we tolerate the platform proxy's self-signed cert chain.
-# Recovery-shim only — see module docstring / README_RECOVERY.md.
-_INSECURE_HOSTS = ("api.massive.com",)
+
+def _auth_headers():
+    """Build auth headers from the unified Massive key, or {} when unset.
+
+    Returning {} preserves the proxy-injection / no-key path (Perplexity
+    custom-cred) so those environments keep working unchanged. The key is
+    never logged or returned to callers other than as a request header.
+    """
+    key = os.environ.get("MASSIVE_API_KEY") or os.environ.get("BENZINGA_API_KEY")
+    if not key:
+        return {}
+    header = (os.environ.get("MASSIVE_API_KEY_HEADER") or "Authorization").strip()
+    if header.lower() == "authorization":
+        return {"Authorization": "Bearer %s" % key}
+    return {header: key}
 
 
-def _is_insecure_host(url):
+def _ca_bundle():
+    """Return a CA bundle for TLS verification; never disables verification.
+
+    Honors REQUESTS_CA_BUNDLE / SSL_CERT_FILE, then certifi, then falls back
+    to system trust (``True`` for requests / default context for urllib).
+    """
+    for var in ("REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"):
+        path = os.environ.get(var)
+        if path:
+            return path
     try:
-        from urllib.parse import urlparse
+        import certifi  # noqa: PLC0415
 
-        host = (urlparse(url).hostname or "").lower()
+        return certifi.where()
     except Exception:
-        return False
-    return any(host == h or host.endswith("." + h) for h in _INSECURE_HOSTS)
+        return True
 
 
 def _today_str():
@@ -70,25 +91,18 @@ def _today_str():
 def _fetch(url):
     """Fetch a URL returning (status_code, parsed_json_or_none, error_or_none).
 
-    Uses requests if available so proxy credential injection works, else
-    falls back to urllib.
+    Uses requests if available, else falls back to urllib. Attaches the
+    Massive auth header when MASSIVE_API_KEY is set; otherwise sends no auth
+    so proxy credential injection still works. TLS verification is always on.
     """
-    insecure = _is_insecure_host(url)
+    headers = {"Accept": "application/json"}
+    headers.update(_auth_headers())
+    bundle = _ca_bundle()
 
     try:
         import requests  # noqa: PLC0415
 
-        # Recovery shim: the platform custom-cred proxy presents a self-signed
-        # chain, so verification must be disabled for the proxied Massive host.
-        if insecure:
-            try:
-                import urllib3  # noqa: PLC0415
-
-                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            except Exception:
-                pass
-
-        resp = requests.get(url, timeout=_TIMEOUT, verify=not insecure)
+        resp = requests.get(url, timeout=_TIMEOUT, headers=headers, verify=bundle)
         status = resp.status_code
         try:
             data = resp.json()
@@ -107,10 +121,9 @@ def _fetch(url):
     import ssl
 
     try:
-        # Recovery shim: unverified SSL context for the proxied Massive host
-        # (self-signed proxy chain). Normal verification for any other host.
-        ctx = ssl._create_unverified_context() if insecure else None
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        ctx = ssl.create_default_context(cafile=bundle) if isinstance(bundle, str) \
+            else ssl.create_default_context()
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=_TIMEOUT, context=ctx) as r:
             status = getattr(r, "status", 200) or 200
             body = r.read().decode("utf-8", "replace")
@@ -198,9 +211,9 @@ def _normalize(name, rec, date_default):
 def scan_all(limit=100):
     """Fetch all configured Benzinga endpoints and return a JSON-serializable dict.
 
-    Credentials are injected at the proxy layer; this function does not
-    read API keys. Returns a dict with status, generated_at, endpoints,
-    records, and counts.
+    Authenticates with MASSIVE_API_KEY when present, else relies on
+    proxy-injected credentials (see module docstring). Returns a dict with
+    status, generated_at, endpoints, records, and counts.
     """
     date_default = _today_str()
     generated_at = _dt.datetime.now().isoformat(timespec="seconds")

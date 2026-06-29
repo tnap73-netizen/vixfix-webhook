@@ -16,8 +16,8 @@ Do not commit raw keys. Secrets live in Railway variables or approved connector 
 
 | Capability | Runtime variable / connector | Required for Railway? | Secret value allowed in git? | Notes |
 |---|---|---:|---:|---|
-| Massive API | `MASSIVE_API_KEY` | yes | no | Must be added directly to Railway service/shared variables. Perplexity `custom-cred:api.massive.com` does not carry into Railway. |
-| Benzinga API | `BENZINGA_API_KEY` | yes | no | Required for guidance and analyst/PT endpoints. Add directly to Railway variables. |
+| Massive API | `MASSIVE_API_KEY` | yes | no | Sole required trading-feed secret for strict ESS. Unified key covering Benzinga earnings, guidance, and analyst/PT ratings via `api.massive.com`. Must be added directly to Railway service/shared variables. Perplexity `custom-cred:api.massive.com` does not carry into Railway. |
+| Benzinga API | `BENZINGA_API_KEY` | no | no | Legacy/informational only. NOT required: Benzinga endpoints are covered by the unified `MASSIVE_API_KEY`. Optional fallback for old standalone-key paths. |
 | QuantData | Railway variable already present if service env includes it | yes for QuantData jobs | no | Verify by runtime env audit before cutover. |
 | Schwab Client ID | `SCHWAB_CLIENT_ID` | yes | no | OAuth app credential. |
 | Schwab Client Secret | `SCHWAB_CLIENT_SECRET` | yes | no | OAuth app credential. |
@@ -44,8 +44,8 @@ Full ESS requires five components:
 | Component | Design weight | Source | Current runtime state |
 |---|---:|---|---|
 | SUE / earnings surprise | 30% | finance connector or Massive/Benzinga | reachable/substitutable |
-| Guidance impulse | 25% | Benzinga guidance via Massive | blocked until Railway has `MASSIVE_API_KEY` and `BENZINGA_API_KEY` |
-| Analyst/PT revision | 20% | Benzinga ratings via Massive | blocked until Railway has `MASSIVE_API_KEY` and `BENZINGA_API_KEY` |
+| Guidance impulse | 25% | Benzinga guidance via Massive | blocked until Railway has `MASSIVE_API_KEY` |
+| Analyst/PT revision | 20% | Benzinga ratings via Massive | blocked until Railway has `MASSIVE_API_KEY` |
 | Smart-money / insider catalyst | 15% | SEC EDGAR | reachable |
 | Post-event confirmation | 10% | yfinance/public OHLCV | reachable/substitutable |
 
@@ -74,4 +74,4 @@ python3 scripts/verify_subscription_env.py
 
 ## Open blocker
 
-Railway PEAD/EDGAR and full Edge Detector v3.0 remain blocked until raw `MASSIVE_API_KEY` and `BENZINGA_API_KEY` are added to Railway. Do not paste keys in chat. Add them directly in Railway variables from the vendor dashboards or approved credential vault UI.
+Railway PEAD/EDGAR and full Edge Detector v3.0 remain blocked until the raw unified `MASSIVE_API_KEY` is added to Railway. `MASSIVE_API_KEY` is the sole required trading-feed secret; a separate `BENZINGA_API_KEY` is not required (legacy/informational only). Do not paste keys in chat. Add the key directly in Railway variables from the vendor dashboard or approved credential vault UI.
