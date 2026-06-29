@@ -134,3 +134,18 @@ Verified from Railway `web` runtime:
 - Benzinga Analyst Ratings through Massive returns HTTP 200.
 
 Both `Authorization: Bearer <MASSIVE_API_KEY>` and `?apiKey=<MASSIVE_API_KEY>` returned HTTP 200 in live checks. The committed scanner defaults to bearer auth when `MASSIVE_API_KEY` is present and preserves proxy fallback when no key is present.
+
+## Canonical proof command
+
+Do not re-debug the key. The repo owns the verification. Run:
+
+```bash
+railway run --service web python3 scripts/probe_massive_benzinga.py
+```
+
+`scripts/probe_massive_benzinga.py` checks `MASSIVE_API_KEY` presence and hits Benzinga Earnings, Corporate Guidance, and Analyst Ratings through Massive with `limit=1`. It prints `RESULT: PASS`/`FAIL` plus per-endpoint HTTP statuses and a `SUMMARY_JSON:` line, and never prints the key. It exits `0` only when the key is present and all three endpoints return HTTP 200. Auth follows the committed scanner: `Authorization: Bearer <MASSIVE_API_KEY>` (header overridable via `MASSIVE_API_KEY_HEADER`), with an `apiKey` query-string fallback if the header attempt does not return 200.
+
+Notes:
+
+- Use `--service web`. Without it the Railway CLI may target another linked service (e.g. `bmcmc-market-health`) and falsely report the key missing.
+- Direct PC/sandbox bash may block outbound network. Use Terminal/Railway or a normal Railway shell if the probe cannot reach `api.massive.com`.
