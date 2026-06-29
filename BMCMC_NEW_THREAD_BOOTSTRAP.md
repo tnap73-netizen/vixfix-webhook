@@ -11,6 +11,8 @@ Use this exact opener:
 ```text
 BMCMC LLC. Pull Hindsight context first. Then read the repo-owned bootstrap and registries before acting:
 - BMCMC_NEW_THREAD_BOOTSTRAP.md
+- BMCMC_EDGE_DETECTOR_TWOSIDED_V3.md
+- BMCMC_SUBSCRIPTION_AND_BACKTEST_REGISTRY.md
 - cron_registry.json
 - BMCMC_PEAD_PROTOCOL_v2.0.md
 - BMCMC_CRON_CONTROL_DOCTRINE.md
@@ -47,6 +49,8 @@ Direct trading language. No filler. No emojis. Do not request new vendors before
 | File | Purpose |
 |---|---|
 | `BMCMC_NEW_THREAD_BOOTSTRAP.md` | This file. Start here in new threads. |
+| `BMCMC_EDGE_DETECTOR_TWOSIDED_V3.md` | Canonical two-sided Edge Detector v3 implementation spec and run checklist. |
+| `BMCMC_SUBSCRIPTION_AND_BACKTEST_REGISTRY.md` | Space-canonical subscription map and required backtest data manifest rules. |
 | `cron_registry.json` | Migration ledger for old thread-owned scheduled tasks moving to repo/Railway ownership. |
 | `BMCMC_CRON_CONTROL_DOCTRINE.md` | Scheduling doctrine and safety rules. |
 | `BMCMC_PEAD_PROTOCOL_v2.0.md` | PEAD protocol doctrine. |
@@ -95,10 +99,18 @@ Known task states:
 
 The subscription map lives in `edgar_speed_feeds/config/SUBSCRIPTION_REGISTRY.md`. It is repo-owned canonical state. Threads and sandboxes are not canonical.
 
-Secrets are never committed. Required Railway variables must be present in Railway:
+Secrets are never committed. Required Railway variable must be present in Railway:
 
 - `MASSIVE_API_KEY`
-- `BENZINGA_API_KEY`
+
+`MASSIVE_API_KEY` is the unified key for Massive/Benzinga access through `api.massive.com`. Do not ask for a separate Benzinga key unless code inspection proves a legacy path still explicitly requires `BENZINGA_API_KEY`.
+
+Canonical Massive package controlled by this one key:
+
+- Options Starter.
+- Benzinga Analyst Ratings.
+- Benzinga Corporate Guidance.
+- Benzinga Earnings.
 
 Perplexity custom credential `custom-cred:api.massive.com` works only inside Perplexity bash calls that explicitly pass `api_credentials=["custom-cred:api.massive.com"]`. It does not carry into Railway runtime.
 
@@ -173,20 +185,21 @@ Grandfathered LEAP positions:
 
 1. Pull Hindsight with the BMCMC tags above.
 2. Read this file.
-3. Read `cron_registry.json`.
-4. Read `edgar_speed_feeds/config/SUBSCRIPTION_REGISTRY.md`.
-5. Check repo head and working tree.
-6. Check Railway service status before changing anything.
-7. Run `python3 scripts/verify_subscription_env.py --strict` inside target runtime before claiming full ESS is unblocked.
-8. If changing scheduled infrastructure, update `cron_registry.json` and retain the result to Hindsight.
-9. If changing subscription reachability, update `SUBSCRIPTION_REGISTRY.md` and retain the result to Hindsight.
+3. Read `BMCMC_EDGE_DETECTOR_TWOSIDED_V3.md`.
+4. Read `BMCMC_SUBSCRIPTION_AND_BACKTEST_REGISTRY.md`.
+5. Read `cron_registry.json`.
+6. Read `edgar_speed_feeds/config/SUBSCRIPTION_REGISTRY.md`.
+7. Check repo head and working tree.
+8. Check Railway service status before changing anything.
+9. Run `python3 scripts/verify_subscription_env.py --strict` inside target runtime before claiming full ESS is unblocked.
+10. If changing scheduled infrastructure, update `cron_registry.json` and retain the result to Hindsight.
+11. If changing subscription reachability, update `SUBSCRIPTION_REGISTRY.md` and retain the result to Hindsight.
 
 ## Current blocker to clear
 
-Add raw Massive/Benzinga keys directly to Railway variables:
+Add the raw Massive/Benzinga key directly to Railway variables:
 
 - `MASSIVE_API_KEY`
-- `BENZINGA_API_KEY`
 
 Then verify from Railway runtime with:
 
