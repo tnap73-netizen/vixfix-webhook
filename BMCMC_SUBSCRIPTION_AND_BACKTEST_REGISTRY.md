@@ -119,3 +119,18 @@ Before claiming full ESS or full Edge Detector v3 readiness:
 ## Current canonical conclusion
 
 Massive/Benzinga is not two subscriptions or two keys for BMCMC. It is one Massive key controlling Options Starter, Benzinga Analyst Ratings, Benzinga Corporate Guidance, and Benzinga Earnings.
+
+## Production verification
+
+As of 2026-06-29, Railway project `caring-happiness`, service `web`, environment `production` has `MASSIVE_API_KEY` present.
+
+Use `railway run --service web ...` for production web-service verification. The Railway CLI may default to another linked service such as `bmcmc-market-health`; if `--service web` is omitted, environment checks can falsely report `MASSIVE_API_KEY` missing.
+
+Verified from Railway `web` runtime:
+
+- `python3 scripts/verify_subscription_env.py --strict` returns `STRICT_PASS`.
+- Benzinga Earnings through Massive returns HTTP 200.
+- Benzinga Corporate Guidance through Massive returns HTTP 200.
+- Benzinga Analyst Ratings through Massive returns HTTP 200.
+
+Both `Authorization: Bearer <MASSIVE_API_KEY>` and `?apiKey=<MASSIVE_API_KEY>` returned HTTP 200 in live checks. The committed scanner defaults to bearer auth when `MASSIVE_API_KEY` is present and preserves proxy fallback when no key is present.
