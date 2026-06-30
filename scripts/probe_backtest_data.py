@@ -30,9 +30,18 @@ REQUIRED = {
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--archive-root", required=True)
+    # --root is Todd's alias for --archive-root; either may be omitted when
+    # BMCMC_DATA_ROOT is set. Resolution matches the builder.
+    ap.add_argument("--archive-root", "--root", dest="archive_root", default=None)
+    # --universe is accepted for CLI compatibility (snapshot id); the archive
+    # root already locates the datasets, so it is informational here.
+    ap.add_argument("--universe", default="bmcmc_v1")
     ap.add_argument("--family", choices=al.VALID_FAMILIES, default="benzinga")
     args = ap.parse_args()
+
+    args.archive_root = args.archive_root or os.environ.get("BMCMC_DATA_ROOT")
+    if not args.archive_root:
+        ap.error("archive root required: pass --archive-root/--root or set BMCMC_DATA_ROOT")
 
     spec = al.FAMILY_DATASETS[args.family]
     key = list(spec["event_key"])
@@ -71,6 +80,7 @@ def main() -> int:
     summary = {
         "result": "PASS" if all_ok else "FAIL",
         "family": args.family,
+        "universe": args.universe,
         "event_key": key,
         "datasets": checks,
         "key_alignment": key_alignment,

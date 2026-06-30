@@ -92,12 +92,18 @@ def _event_study(fwd: pd.DataFrame, horizon: str, factors: pd.DataFrame | None) 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--archive-root", required=True)
+    # --root is Todd's alias for --archive-root; either may be omitted when
+    # BMCMC_DATA_ROOT is set. Resolution matches the builder/probe.
+    ap.add_argument("--archive-root", "--root", dest="archive_root", default=None)
     ap.add_argument("--universe", default="bmcmc_v1")
     ap.add_argument("--family", choices=al.VALID_FAMILIES, default="benzinga")
     ap.add_argument("--primary-horizon", default=None,
                     help="override family default (benzinga=t5, uvol=t20)")
     args = ap.parse_args()
+
+    args.archive_root = args.archive_root or os.environ.get("BMCMC_DATA_ROOT")
+    if not args.archive_root:
+        ap.error("archive root required: pass --archive-root/--root or set BMCMC_DATA_ROOT")
 
     arch = al.load_for_backtest(args.archive_root, family=args.family)
     primary = args.primary_horizon or arch.primary_horizon

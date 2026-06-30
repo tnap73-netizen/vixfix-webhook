@@ -174,11 +174,22 @@ def _trading_cutoff(prices: pd.DataFrame, end_date: pd.Timestamp, days: int) -> 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--inputs-dir", required=True)
-    ap.add_argument("--archive-root", required=True)
-    ap.add_argument("--snapshot-id", default="bmcmc_v1")
+    # --root is Todd's alias for --archive-root; either may be omitted when
+    # BMCMC_DATA_ROOT is set in the environment.
+    ap.add_argument("--archive-root", "--root", dest="archive_root", default=None)
+    # --universe is Todd's alias for the snapshot id.
+    ap.add_argument("--snapshot-id", "--universe", dest="snapshot_id", default="bmcmc_v1")
     ap.add_argument("--end", required=True, help="YYYY-MM-DD PIT cutoff")
+    # --start is accepted for CLI compatibility and recorded in the report
+    # only; the build itself is PIT-gated by --end.
+    ap.add_argument("--start", default=None, help="YYYY-MM-DD start (report metadata only)")
     ap.add_argument("--family", choices=al.VALID_FAMILIES, default="benzinga")
     args = ap.parse_args()
+
+    archive_root = args.archive_root or os.environ.get("BMCMC_DATA_ROOT")
+    if not archive_root:
+        ap.error("archive root required: pass --archive-root/--root or set BMCMC_DATA_ROOT")
+    args.archive_root = archive_root
 
     end_date = pd.Timestamp(args.end)
     auth_mode = "prices_injected_no_key"  # UVOL needs no Massive key.
@@ -213,7 +224,14 @@ def main() -> int:
     ledger_rows = {"benzinga": 0, "uvol": 0}
     coverage = {}
 
-    if args.family == "uvol":
+    # UVOL inputs are detected from the events file regardless of --family, so
+    # Todd's family-less build still produces the UVOL ledger/forward returns
+    # that `probe_backtest_data.py --family uvol` requires.
+    events_are_uvol = bool(
+        events["event_type"].astype(str).str.lower().eq("unusual_volume").any()
+    )
+
+    if args.family == "uvol" or events_are_uvol:
         ledger = _build_uvol_ledger(events)
         al.write_dataset(args.archive_root, "event_ledger_uvol", ledger, kind="curated",
                          extra_meta={"snapshot_id": args.snapshot_id,
@@ -244,7 +262,9 @@ def main() -> int:
         "snapshot_id": args.snapshot_id,
         "auth_mode": auth_mode,
         "family": args.family,
+        "start": args.start,
         "end": args.end,
+        "archive_root": args.archive_root,
         "membership_is_point_in_time": False,
         "ledger_rows": ledger_rows,
         "price_rows": int(len(prices)),
